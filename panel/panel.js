@@ -175,31 +175,62 @@ async function renderSettings(epoch) {
     return input;
   };
   const DEFAULT_BASE = globalThis.MeetOpenAI.DEFAULT_BASE_URL;
+  const baseUrl = field('Base URL (OpenAI-compatible)',
+    Object.assign(document.createElement('input'), { value: settings.baseUrl ?? DEFAULT_BASE }));
   const apiKey = field('API key',
     Object.assign(document.createElement('input'), { type: 'password', value: settings.apiKey ?? '' }));
-  const baseUrl = field('Base URL (OpenAI-compatible; OpenRouter: https://openrouter.ai/api/v1)',
-    Object.assign(document.createElement('input'), { value: settings.baseUrl ?? DEFAULT_BASE }));
   const model = field('Model',
     Object.assign(document.createElement('input'), { value: settings.model ?? 'gpt-4o-mini' }));
   const template = field('Template MoM ({{transcript}} = transkrip)',
     Object.assign(document.createElement('textarea'), { value: settings.momTemplate ?? M.DEFAULT_MOM_TEMPLATE }));
 
-  const save = el('button', null, 'Simpan');
   const note = el('span', 'muted', '');
-  save.addEventListener('click', async () => {
-    const base = (baseUrl.value.trim() || DEFAULT_BASE).replace(/\/+$/, '');
+  const setNote = (cls, text) => { note.className = cls; note.textContent = ' ' + text; };
+
+  const normalizedBase = () => (baseUrl.value.trim() || DEFAULT_BASE).replace(/\/+$/, '');
+
+  // Host selain default butuh izin runtime (manifest hanya mengizinkan
+  // api.openai.com). Diminta di sini karena perlu user gesture.
+  async function ensureOrigin(base) {
     let origin;
     try {
       origin = new URL(base).origin;
     } catch {
-      note.textContent = ' Base URL tidak valid.';
-      return;
+      throw new Error('Base URL tidak valid.');
     }
-    // Host selain default butuh izin runtime (manifest hanya mengizinkan
-    // api.openai.com). Diminta di sini karena perlu user gesture.
-    let denied = false;
-    if (origin !== 'https://api.openai.com') {
-      denied = !(await chrome.permissions.request({ origins: [origin + '/*'] }).catch(() => false));
+    if (origin === 'https://api.openai.com') return;
+    const ok = await chrome.permissions.request({ origins: [origin + '/*'] }).catch(() => false);
+    if (!ok) throw new Error(`Izin akses ${origin} ditolak.`);
+  }
+
+  const test = el('button', null, 'Tes koneksi');
+  test.addEventListener('click', async () => {
+    test.disabled = true;
+    setNote('muted', 'Menguji…');
+    try {
+      const base = normalizedBase();
+      await ensureOrigin(base);
+      await globalThis.MeetOpenAI.testConnection({
+        apiKey: apiKey.value.trim(),
+        model: model.value.trim() || 'gpt-4o-mini',
+        baseUrl: base,
+      });
+      setNote('ok', '✓ Koneksi OK — URL, API key, dan model valid.');
+    } catch (e) {
+      setNote('err', '✗ Gagal: ' + e.message);
+    }
+    test.disabled = false;
+  });
+
+  const save = el('button', null, 'Simpan');
+  save.addEventListener('click', async () => {
+    const base = normalizedBase();
+    let warning = null;
+    try {
+      await ensureOrigin(base);
+    } catch (e) {
+      if (e.message === 'Base URL tidak valid.') return setNote('err', e.message);
+      warning = e.message; // izin ditolak → tetap simpan, tapi beri tahu
     }
     await chrome.storage.local.set({
       settings: {
@@ -209,11 +240,13 @@ async function renderSettings(epoch) {
         momTemplate: template.value,
       },
     });
-    note.textContent = denied
-      ? ` Tersimpan, tapi izin akses ${origin} ditolak — request bisa gagal.`
-      : ' Tersimpan.';
+    if (warning) setNote('err', `Tersimpan, tapi ${warning} Request bisa gagal.`);
+    else setNote('ok', 'Tersimpan.');
   });
-  view.append(save, note);
+
+  const actions = el('div', 'actions');
+  actions.append(test, save, note);
+  view.append(actions);
 }
 
 (async () => {
