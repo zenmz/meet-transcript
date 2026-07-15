@@ -48,6 +48,7 @@ function download(name, text) {
 // Epoch guard: render async saling balapan (klik tab vs broadcast SW);
 // pass yang kalah cepat tidak boleh menimpa DOM pass yang lebih baru.
 let renderEpoch = 0;
+let lastRenderedKey = null; // view terakhir yang digambar renderMeeting (id|live)
 
 async function render() {
   const epoch = ++renderEpoch;
@@ -59,8 +60,12 @@ async function render() {
 async function renderMeeting(id, live, epoch) {
   const meeting = id ? await getMeeting(id) : null;
   if (epoch !== renderEpoch) return; // pass lebih baru sudah jalan
-  const stickToBottom = live && view.scrollHeight - view.scrollTop - view.clientHeight < 40;
-  const prevTop = view.scrollTop; // pulihkan posisi baca saat rerender live
+  const sameView = `${id}|${live}` === lastRenderedKey;
+  lastRenderedKey = `${id}|${live}`;
+  // Navigasi ke view lain: mulai dari bawah (live) / atas (riwayat).
+  // Rerender view yang sama: pertahankan posisi baca.
+  const stickToBottom = live && (!sameView || view.scrollHeight - view.scrollTop - view.clientHeight < 40);
+  const prevTop = sameView ? view.scrollTop : 0;
   view.replaceChildren();
 
   if (live && status.inCall && !status.captionsOn) {
@@ -132,6 +137,7 @@ async function renderHistory(epoch) {
   const { meetings = [] } = await chrome.storage.local.get('meetings');
   const items = (await Promise.all(meetings.map(getMeeting))).filter(Boolean);
   if (epoch !== renderEpoch) return;
+  lastRenderedKey = null;
   view.replaceChildren();
   if (!items.length) {
     view.append(el('p', 'muted', 'Belum ada riwayat.'));
@@ -152,6 +158,7 @@ async function renderHistory(epoch) {
 async function renderSettings(epoch) {
   const { settings = {} } = await chrome.storage.local.get('settings');
   if (epoch !== renderEpoch) return;
+  lastRenderedKey = null;
   view.replaceChildren();
   view.append(el('h2', null, 'Settings'));
 
