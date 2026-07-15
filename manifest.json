@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Meet Transcript",
+  "version": "0.1.0",
+  "description": "Transkrip Google Meet dari live caption + generate MoM via OpenAI",
+  "permissions": ["sidePanel", "storage", "unlimitedStorage"],
+  "host_permissions": ["https://meet.google.com/*", "https://api.openai.com/*"],
+  "background": { "service_worker": "background/service-worker.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://meet.google.com/*"],
+      "js": ["content/selectors.js", "content/captions.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "side_panel": { "default_path": "panel/panel.html" },
+  "action": { "default_title": "Meet Transcript" }
+}
