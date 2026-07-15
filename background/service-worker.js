@@ -1,5 +1,5 @@
 // background/service-worker.js
-importScripts('/lib/merge.js');
+importScripts('/lib/merge.js', '/lib/openai.js');
 
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 
@@ -40,6 +40,24 @@ async function endMeeting(meetingId) {
   notifyPanel({ type: 'meeting-updated', id: meetingId });
 }
 
+async function generateMom(id) {
+  const { settings = {} } = await chrome.storage.local.get('settings');
+  if (!settings.apiKey) throw new Error('API key belum diisi di tab Settings.');
+  const key = 'meeting:' + id;
+  const data = await chrome.storage.local.get(key);
+  const meeting = data[key];
+  if (!meeting || !meeting.segments.length) throw new Error('Transkrip kosong.');
+  const transcript = globalThis.MeetMerge.formatTranscript(meeting.segments);
+  const prompt = globalThis.MeetMerge.fillTemplate(
+    settings.momTemplate || globalThis.MeetMerge.DEFAULT_MOM_TEMPLATE, transcript);
+  const mom = await globalThis.MeetOpenAI.generateMoM({
+    apiKey: settings.apiKey, model: settings.model || 'gpt-4o-mini', prompt,
+  });
+  meeting.mom = mom;
+  await chrome.storage.local.set({ [key]: meeting });
+  return mom;
+}
+
 // Storage writes diserialisasi: get→set yang tumpang tindih bisa saling
 // menimpa (segmen hilang), jadi semua write antre di satu chain.
 let writeChain = Promise.resolve();
@@ -71,5 +89,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'get-active') {
     sendResponse(active);
     return false;
+  }
+  if (msg.type === 'generate-mom') {
+    generateMom(msg.id).then(
+      (mom) => sendResponse({ ok: true, mom }),
+      (e) => sendResponse({ ok: false, error: e.message })
+    );
+    return true; // sendResponse async
   }
 });

@@ -96,6 +96,16 @@ async function renderMeeting(id, live, epoch) {
   btn('Copy', () => navigator.clipboard.writeText(M.formatTranscript(meeting.segments)));
   btn('Unduh .txt', () => download(`${meeting.title}.txt`, M.formatTranscript(meeting.segments)));
   btn('Unduh .md', () => download(`${meeting.title}.md`, M.formatMarkdown(meeting)));
+  const momBtn = btn(meeting.mom ? 'Regenerate MoM' : 'Generate MoM', async () => {
+    momBtn.disabled = true;
+    momBtn.textContent = 'Menghasilkan…';
+    const res = await chrome.runtime.sendMessage({ type: 'generate-mom', id: meeting.id })
+      .catch(() => null);
+    if (res?.ok) return render();
+    view.prepend(el('div', 'error', res?.error ?? 'Gagal menghubungi service worker.'));
+    momBtn.disabled = false;
+    momBtn.textContent = 'Generate MoM';
+  });
   view.append(actions);
 
   const list = el('div');
