@@ -23,16 +23,22 @@
   }
 
   function captionBlocks(region) {
-    // div[jsname="tgaKEf"] = elemen teks caption; parent-nya = block satu
-    // giliran bicara (avatar + nama + teks).
+    // Struktur per 2026-07 (diverifikasi di Meet asli):
+    //   div.nMcdL           = block satu giliran bicara
+    //     div.adE6rb        = header: img avatar + span.NWpY1d nama
+    //     div.ygicle        = teks caption
+    // Tombol "Jump to bottom" (div.IMKgW) ada di luar block → tak ikut ke-scrape.
+    const blocks = region.querySelectorAll('div.nMcdL');
+    if (blocks.length) return [...blocks];
+    // Build lama: div[jsname="tgaKEf"] = elemen teks; parent = block.
     const texts = region.querySelectorAll('div[jsname="tgaKEf"]');
     if (texts.length) return [...texts].map((t) => t.parentElement);
-    // Fallback struktural: anak langsung region yang punya avatar <img>.
+    // Fallback struktural terakhir (lemah): anak langsung region yang punya avatar.
     return [...region.children].filter((c) => c.querySelector('img'));
   }
 
   function blockSpeaker(block) {
-    const el = q(['.NWpY1d', '.zs7s8d'], block);
+    const el = q(['.NWpY1d', '.KcIKyf', '.zs7s8d'], block);
     if (el) return el.textContent.trim();
     // Fallback struktural: sibling setelah avatar = nama.
     const img = block.querySelector('img');
@@ -41,10 +47,12 @@
   }
 
   function blockText(block) {
-    const el = q(['div[jsname="tgaKEf"]'], block);
+    const el = q(['.ygicle', 'div[jsname="tgaKEf"]'], block);
     if (el) return el.textContent.trim();
-    // Fallback: seluruh teks block minus nama pembicara.
-    return block.textContent.replace(blockSpeaker(block), '').trim();
+    // Fallback: teks block minus header (avatar+nama) & elemen UI (tombol/ikon).
+    const clone = block.cloneNode(true);
+    clone.querySelectorAll('img, button, i').forEach((n) => n.remove());
+    return clone.textContent.replace(blockSpeaker(block), '').trim();
   }
 
   function ccButton() {
