@@ -42,13 +42,15 @@ function download(name, text) {
   a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
   a.download = safeName(name);
   a.click();
-  URL.revokeObjectURL(a.href);
+  // Revoke ditunda: dialog "Save as" baru membaca blob setelah click() kembali.
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
 }
 
 // Epoch guard: render async saling balapan (klik tab vs broadcast SW);
 // pass yang kalah cepat tidak boleh menimpa DOM pass yang lebih baru.
 let renderEpoch = 0;
 let lastRenderedKey = null; // view terakhir yang digambar renderMeeting (id|live)
+const momErrors = new Map(); // meetingId → pesan error MoM terakhir
 
 async function render() {
   const epoch = ++renderEpoch;
@@ -92,6 +94,7 @@ async function renderMeeting(id, live, epoch) {
   view.append(el('h2', null, meeting.title));
   view.append(el('p', 'muted', new Date(meeting.startedAt).toLocaleString()));
 
+  if (momErrors.has(meeting.id)) view.append(el('div', 'error', momErrors.get(meeting.id)));
   const actions = el('div', 'actions');
   const btn = (label, fn) => {
     const b = el('button', null, label);
@@ -99,19 +102,24 @@ async function renderMeeting(id, live, epoch) {
     actions.append(b);
     return b;
   };
-  btn('Copy', () => navigator.clipboard.writeText(M.formatTranscript(meeting.segments)));
+  const copyBtn = btn('Copy', async () => {
+    try {
+      await navigator.clipboard.writeText(M.formatTranscript(meeting.segments));
+      copyBtn.textContent = 'Disalin ✓';
+    } catch {
+      copyBtn.textContent = 'Gagal menyalin';
+    }
+  });
   btn('Unduh .txt', () => download(`${meeting.title}.txt`, M.formatTranscript(meeting.segments)));
   btn('Unduh .md', () => download(`${meeting.title}.md`, M.formatMarkdown(meeting)));
   const momBtn = btn(meeting.mom ? 'Regenerate MoM' : 'Generate MoM', async () => {
     momBtn.disabled = true;
     momBtn.textContent = 'Menghasilkan…';
+    momErrors.delete(meeting.id);
     const res = await chrome.runtime.sendMessage({ type: 'generate-mom', id: meeting.id })
       .catch(() => null);
-    if (res?.ok) return render(); // render() selalu menggambar view saat ini — aman
-    if (epoch !== renderEpoch) return; // view sudah berganti — jangan sentuh DOM lama
-    view.prepend(el('div', 'error', res?.error ?? 'Gagal menghubungi service worker.'));
-    momBtn.disabled = false;
-    momBtn.textContent = 'Generate MoM';
+    if (!res?.ok) momErrors.set(meeting.id, res?.error ?? 'Gagal menghubungi service worker.');
+    render(); // state persisten + render(): epoch-safe, error tetap tampil setelah rerender
   });
   view.append(actions);
 

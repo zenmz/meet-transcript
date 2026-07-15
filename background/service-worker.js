@@ -23,7 +23,7 @@ async function saveSegments({ meetingId, title, segs }) {
   const meetings = data.meetings ?? [];
   if (!meetings.includes(meetingId)) meetings.unshift(meetingId);
   await chrome.storage.local.set({ [key]: meeting, meetings });
-  active.lastSegmentAt = Date.now();
+  if (!active.id || active.id === meetingId) active.lastSegmentAt = Date.now();
   notifyPanel({ type: 'meeting-updated', id: meetingId });
 }
 
@@ -100,6 +100,10 @@ chrome.runtime.onConnect.addListener((port) => {
       enqueueWrite(() => saveSegments(msg));
     } else if (msg.type === 'status') {
       meetingId = msg.meetingId;
+      // Multi-tab: tab yang benar-benar in-call menang; tab lain (lobby/stale)
+      // tidak boleh menimpa status meeting yang sedang berjalan.
+      const canClaim = msg.inCall || active.id === msg.meetingId || !active.inCall || !active.id;
+      if (!canClaim) return;
       if (msg.captionsOn && !active.captionsOn) active.captionsOnAt = Date.now();
       active = { ...active, id: msg.meetingId, inCall: msg.inCall, captionsOn: msg.captionsOn };
       notifyPanel({ type: 'status', ...active });
