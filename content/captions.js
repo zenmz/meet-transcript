@@ -5,13 +5,30 @@
   if (!/^[a-z]{3}-[a-z]{4}-[a-z]{3}$/.test(meetingId)) return; // bukan halaman call
 
   let port = null;
+  let statusTimer = null;
+  let flushTimer = null;
+
   function connect() {
     port = chrome.runtime.connect({ name: 'captions' });
     port.onDisconnect.addListener(() => { port = null; }); // SW restart → reconnect di post berikutnya
   }
+
+  function stopAll() {
+    // Extension di-reload/di-update → content script ini yatim dan tidak akan
+    // pernah bisa reconnect. Matikan semua supaya tidak spam error tiap tick.
+    clearInterval(statusTimer);
+    clearInterval(flushTimer);
+    observer?.disconnect();
+    observer = null;
+  }
+
   function post(msg) {
-    if (!port) connect();
+    if (!chrome.runtime?.id) { // context invalidated (extension reload)
+      stopAll();
+      return false;
+    }
     try {
+      if (!port) connect();
       port.postMessage(msg);
       return true;
     } catch {
@@ -44,7 +61,7 @@
   }
 
   // Tick 2 detik: pasang/lepas observer, auto-CC, lapor status.
-  setInterval(() => {
+  statusTimer = setInterval(() => {
     const region = S.captionsRegion();
     if (region && region !== observedRegion) {
       observer?.disconnect();
@@ -65,7 +82,7 @@
   }, 2000);
 
   // Flush 500ms: kirim hanya segmen yang berubah; batch gagal di-retry tick berikutnya.
-  setInterval(() => {
+  flushTimer = setInterval(() => {
     if (!dirty.size) return;
     const sent = post({ type: 'segments', meetingId, title: S.meetingTitle(), segs: [...dirty.values()] });
     if (sent) dirty.clear();
