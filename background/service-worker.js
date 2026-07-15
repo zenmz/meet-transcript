@@ -40,13 +40,21 @@ async function endMeeting(meetingId) {
   notifyPanel({ type: 'meeting-updated', id: meetingId });
 }
 
+// Storage writes diserialisasi: get→set yang tumpang tindih bisa saling
+// menimpa (segmen hilang), jadi semua write antre di satu chain.
+let writeChain = Promise.resolve();
+const enqueueWrite = (fn) => {
+  writeChain = writeChain.then(fn).catch((e) => console.error('storage write', e));
+  return writeChain;
+};
+
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'captions') return;
   let meetingId = null;
   port.onMessage.addListener((msg) => {
     if (msg.type === 'segments') {
       meetingId = msg.meetingId;
-      saveSegments(msg);
+      enqueueWrite(() => saveSegments(msg));
     } else if (msg.type === 'status') {
       meetingId = msg.meetingId;
       if (msg.captionsOn && !active.captionsOn) active.captionsOnAt = Date.now();
@@ -55,7 +63,7 @@ chrome.runtime.onConnect.addListener((port) => {
     }
   });
   port.onDisconnect.addListener(() => {
-    if (meetingId) endMeeting(meetingId);
+    if (meetingId) enqueueWrite(() => endMeeting(meetingId));
   });
 });
 
