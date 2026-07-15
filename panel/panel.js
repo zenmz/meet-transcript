@@ -192,15 +192,18 @@ async function renderSettings(epoch) {
   // Host selain default butuh izin runtime (manifest hanya mengizinkan
   // api.openai.com). Diminta di sini karena perlu user gesture.
   async function ensureOrigin(base) {
-    let origin;
+    let u;
     try {
-      origin = new URL(base).origin;
+      u = new URL(base);
     } catch {
       throw new Error('Base URL tidak valid.');
     }
-    if (origin === 'https://api.openai.com') return;
-    const ok = await chrome.permissions.request({ origins: [origin + '/*'] }).catch(() => false);
-    if (!ok) throw new Error(`Izin akses ${origin} ditolak.`);
+    // Match pattern Chrome tidak boleh berisi port — pakai hostname saja
+    // (pattern tanpa port otomatis mencakup semua port, mis. localhost:20128).
+    const pattern = `${u.protocol}//${u.hostname}/*`;
+    if (pattern === 'https://api.openai.com/*') return;
+    const ok = await chrome.permissions.request({ origins: [pattern] }).catch(() => false);
+    if (!ok) throw new Error(`Izin akses ${u.hostname} ditolak.`);
   }
 
   const test = el('button', null, 'Tes koneksi');
