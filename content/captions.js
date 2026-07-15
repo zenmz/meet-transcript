@@ -22,6 +22,9 @@
 
   const blockIds = new WeakMap(); // element block → id segmen
   const firstSeen = new Map();    // id → timestamp pertama terlihat
+  // Tag unik per sesi script: reload tab me-reset counter; tanpa tag,
+  // id baru menabrak id lama di storage dan menimpa awal transkrip.
+  const sessionTag = crypto.randomUUID().slice(0, 8);
   let nextId = 1;
   const dirty = new Map();        // id → segmen yang berubah sejak flush terakhir
   let observer = null;
@@ -32,7 +35,7 @@
     for (const block of S.captionBlocks(region)) {
       if (!block) continue;
       let id = blockIds.get(block);
-      if (!id) { id = nextId++; blockIds.set(block, id); }
+      if (!id) { id = `${sessionTag}:${nextId++}`; blockIds.set(block, id); }
       const text = S.blockText(block);
       if (!text) continue;
       if (!firstSeen.has(id)) firstSeen.set(id, Date.now());
