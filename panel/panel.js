@@ -101,7 +101,8 @@ async function renderMeeting(id, live, epoch) {
     momBtn.textContent = 'Menghasilkan…';
     const res = await chrome.runtime.sendMessage({ type: 'generate-mom', id: meeting.id })
       .catch(() => null);
-    if (res?.ok) return render();
+    if (res?.ok) return render(); // render() selalu menggambar view saat ini — aman
+    if (epoch !== renderEpoch) return; // view sudah berganti — jangan sentuh DOM lama
     view.prepend(el('div', 'error', res?.error ?? 'Gagal menghubungi service worker.'));
     momBtn.disabled = false;
     momBtn.textContent = 'Generate MoM';

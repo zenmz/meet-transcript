@@ -53,8 +53,21 @@ async function generateMom(id) {
   const mom = await globalThis.MeetOpenAI.generateMoM({
     apiKey: settings.apiKey, model: settings.model || 'gpt-4o-mini', prompt,
   });
-  meeting.mom = mom;
-  await chrome.storage.local.set({ [key]: meeting });
+  // Persist lewat writeChain + re-read: segmen yang masuk selama request
+  // OpenAI tidak boleh tertimpa objek meeting yang stale.
+  await new Promise((resolve, reject) => {
+    enqueueWrite(async () => {
+      try {
+        const fresh = (await chrome.storage.local.get(key))[key];
+        if (!fresh) throw new Error('Meeting tidak ditemukan.');
+        fresh.mom = mom;
+        await chrome.storage.local.set({ [key]: fresh });
+        resolve();
+      } catch (e) {
+        reject(e);
+      }
+    });
+  });
   return mom;
 }
 
