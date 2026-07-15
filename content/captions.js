@@ -11,7 +11,13 @@
   }
   function post(msg) {
     if (!port) connect();
-    try { port.postMessage(msg); } catch { port = null; }
+    try {
+      port.postMessage(msg);
+      return true;
+    } catch {
+      port = null; // SW restart → reconnect & retry di tick berikutnya
+      return false;
+    }
   }
 
   const blockIds = new WeakMap(); // element block → id segmen
@@ -55,11 +61,11 @@
     post({ type: 'status', meetingId, inCall: S.inCall(), captionsOn: !!region });
   }, 2000);
 
-  // Flush 500ms: kirim hanya segmen yang berubah.
+  // Flush 500ms: kirim hanya segmen yang berubah; batch gagal di-retry tick berikutnya.
   setInterval(() => {
     if (!dirty.size) return;
-    post({ type: 'segments', meetingId, title: S.meetingTitle(), segs: [...dirty.values()] });
-    dirty.clear();
+    const sent = post({ type: 'segments', meetingId, title: S.meetingTitle(), segs: [...dirty.values()] });
+    if (sent) dirty.clear();
   }, 500);
 
   connect();
