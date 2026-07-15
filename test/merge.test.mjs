@@ -50,6 +50,10 @@ test('fillTemplate mengganti semua placeholder', () => {
   assert.equal(fillTemplate('A {{transcript}} B {{transcript}}', 'X'), 'A X B X');
 });
 
+test('fillTemplate tidak menafsirkan pola $ di transkrip', () => {
+  assert.equal(fillTemplate('X {{transcript}} Y', 'a$&b'), 'X a$&b Y');
+});
+
 test('DEFAULT_MOM_TEMPLATE mengandung placeholder', () => {
   assert.ok(DEFAULT_MOM_TEMPLATE.includes('{{transcript}}'));
 });

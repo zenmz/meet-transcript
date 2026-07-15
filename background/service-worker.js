@@ -71,6 +71,18 @@ async function generateMom(id) {
   return mom;
 }
 
+// Single-flight: klik ganda / panel ganda tidak boleh memicu dua request
+// OpenAI paralel untuk meeting yang sama.
+const momInFlight = new Map();
+function generateMomOnce(id) {
+  let p = momInFlight.get(id);
+  if (!p) {
+    p = generateMom(id).finally(() => momInFlight.delete(id));
+    momInFlight.set(id, p);
+  }
+  return p;
+}
+
 // Storage writes diserialisasi: get→set yang tumpang tindih bisa saling
 // menimpa (segmen hilang), jadi semua write antre di satu chain.
 let writeChain = Promise.resolve();
@@ -104,7 +116,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return false;
   }
   if (msg.type === 'generate-mom') {
-    generateMom(msg.id).then(
+    generateMomOnce(msg.id).then(
       (mom) => sendResponse({ ok: true, mom }),
       (e) => sendResponse({ ok: false, error: e.message })
     );

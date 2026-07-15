@@ -60,6 +60,7 @@ async function renderMeeting(id, live, epoch) {
   const meeting = id ? await getMeeting(id) : null;
   if (epoch !== renderEpoch) return; // pass lebih baru sudah jalan
   const stickToBottom = live && view.scrollHeight - view.scrollTop - view.clientHeight < 40;
+  const prevTop = view.scrollTop; // pulihkan posisi baca saat rerender live
   view.replaceChildren();
 
   if (live && status.inCall && !status.captionsOn) {
@@ -124,7 +125,7 @@ async function renderMeeting(id, live, epoch) {
     view.append(el('h3', null, 'MoM'));
     view.append(el('div', 'mom', meeting.mom));
   }
-  if (stickToBottom) view.scrollTop = view.scrollHeight;
+  view.scrollTop = stickToBottom ? view.scrollHeight : prevTop;
 }
 
 async function renderHistory(epoch) {
