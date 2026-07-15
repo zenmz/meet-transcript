@@ -1,0 +1,21 @@
+body { font: 13px/1.5 system-ui, sans-serif; margin: 0; color: #1a1a1a; }
+nav { display: flex; border-bottom: 1px solid #ddd; position: sticky; top: 0; background: #fff; }
+nav button { flex: 1; padding: 8px; border: 0; background: none; cursor: pointer; border-bottom: 2px solid transparent; }
+nav button.active { font-weight: 600; border-bottom-color: #1a73e8; }
+main { padding: 12px; overflow-y: auto; height: calc(100vh - 37px); box-sizing: border-box; }
+h2 { font-size: 15px; margin: 8px 0 2px; }
+h3 { font-size: 13px; margin: 12px 0 4px; }
+.muted { color: #888; }
+.seg { margin-bottom: 8px; }
+.seg .who { font-weight: 600; }
+.seg .time { color: #888; font-size: 11px; margin-left: 4px; }
+.warn { background: #fef7e0; border: 1px solid #f9ab00; padding: 8px; border-radius: 6px; margin-bottom: 8px; }
+.error { background: #fce8e6; border: 1px solid #d93025; padding: 8px; border-radius: 6px; margin-bottom: 8px; }
+.actions { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+button { padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; background: #fff; cursor: pointer; font: inherit; }
+button:disabled { opacity: .5; }
+.item { display: block; width: 100%; text-align: left; margin-bottom: 6px; padding: 8px; }
+.mom { white-space: pre-wrap; background: #f6f8fa; padding: 8px; border-radius: 6px; }
+label { display: block; font-weight: 600; margin-top: 8px; }
+textarea, input { width: 100%; box-sizing: border-box; margin: 4px 0 4px; padding: 6px; border: 1px solid #ccc; border-radius: 6px; font: inherit; }
+textarea { min-height: 160px; }
