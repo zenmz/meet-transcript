@@ -52,6 +52,7 @@ async function generateMom(id) {
     settings.momTemplate || globalThis.MeetMerge.DEFAULT_MOM_TEMPLATE, transcript);
   const mom = await globalThis.MeetOpenAI.generateMoM({
     apiKey: settings.apiKey, model: settings.model || 'gpt-4o-mini', prompt,
+    baseUrl: settings.baseUrl,
   });
   // Persist lewat writeChain + re-read: segmen yang masuk selama request
   // OpenAI tidak boleh tertimpa objek meeting yang stale.

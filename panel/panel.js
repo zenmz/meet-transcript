@@ -174,8 +174,11 @@ async function renderSettings(epoch) {
     view.append(el('label', null, label), input);
     return input;
   };
-  const apiKey = field('OpenAI API key',
+  const DEFAULT_BASE = globalThis.MeetOpenAI.DEFAULT_BASE_URL;
+  const apiKey = field('API key',
     Object.assign(document.createElement('input'), { type: 'password', value: settings.apiKey ?? '' }));
+  const baseUrl = field('Base URL (OpenAI-compatible; OpenRouter: https://openrouter.ai/api/v1)',
+    Object.assign(document.createElement('input'), { value: settings.baseUrl ?? DEFAULT_BASE }));
   const model = field('Model',
     Object.assign(document.createElement('input'), { value: settings.model ?? 'gpt-4o-mini' }));
   const template = field('Template MoM ({{transcript}} = transkrip)',
@@ -184,14 +187,31 @@ async function renderSettings(epoch) {
   const save = el('button', null, 'Simpan');
   const note = el('span', 'muted', '');
   save.addEventListener('click', async () => {
+    const base = (baseUrl.value.trim() || DEFAULT_BASE).replace(/\/+$/, '');
+    let origin;
+    try {
+      origin = new URL(base).origin;
+    } catch {
+      note.textContent = ' Base URL tidak valid.';
+      return;
+    }
+    // Host selain default butuh izin runtime (manifest hanya mengizinkan
+    // api.openai.com). Diminta di sini karena perlu user gesture.
+    let denied = false;
+    if (origin !== 'https://api.openai.com') {
+      denied = !(await chrome.permissions.request({ origins: [origin + '/*'] }).catch(() => false));
+    }
     await chrome.storage.local.set({
       settings: {
         apiKey: apiKey.value.trim(),
+        baseUrl: base,
         model: model.value.trim() || 'gpt-4o-mini',
         momTemplate: template.value,
       },
     });
-    note.textContent = ' Tersimpan.';
+    note.textContent = denied
+      ? ` Tersimpan, tapi izin akses ${origin} ditolak — request bisa gagal.`
+      : ' Tersimpan.';
   });
   view.append(save, note);
 }
