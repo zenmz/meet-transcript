@@ -45,14 +45,20 @@ function download(name, text) {
   URL.revokeObjectURL(a.href);
 }
 
+// Epoch guard: render async saling balapan (klik tab vs broadcast SW);
+// pass yang kalah cepat tidak boleh menimpa DOM pass yang lebih baru.
+let renderEpoch = 0;
+
 async function render() {
-  if (tab === 'live') return renderMeeting(status.id, true);
-  if (tab === 'history') return viewingId ? renderMeeting(viewingId, false) : renderHistory();
-  return renderSettings();
+  const epoch = ++renderEpoch;
+  if (tab === 'live') return renderMeeting(status.id, true, epoch);
+  if (tab === 'history') return viewingId ? renderMeeting(viewingId, false, epoch) : renderHistory(epoch);
+  return renderSettings(epoch);
 }
 
-async function renderMeeting(id, live) {
+async function renderMeeting(id, live, epoch) {
   const meeting = id ? await getMeeting(id) : null;
+  if (epoch !== renderEpoch) return; // pass lebih baru sudah jalan
   const stickToBottom = live && view.scrollHeight - view.scrollTop - view.clientHeight < 40;
   view.replaceChildren();
 
@@ -110,29 +116,30 @@ async function renderMeeting(id, live) {
   if (stickToBottom) view.scrollTop = view.scrollHeight;
 }
 
-async function renderHistory() {
+async function renderHistory(epoch) {
   const { meetings = [] } = await chrome.storage.local.get('meetings');
+  const items = (await Promise.all(meetings.map(getMeeting))).filter(Boolean);
+  if (epoch !== renderEpoch) return;
   view.replaceChildren();
-  if (!meetings.length) {
+  if (!items.length) {
     view.append(el('p', 'muted', 'Belum ada riwayat.'));
     return;
   }
-  for (const id of meetings) {
-    const m = await getMeeting(id);
-    if (!m) continue;
+  for (const m of items) {
     const item = el('button', 'item');
     item.append(
       el('div', 'who', m.title),
       el('div', 'muted',
         `${new Date(m.startedAt).toLocaleString()} — ${m.segments.length} segmen${m.mom ? ' — MoM ✓' : ''}`)
     );
-    item.addEventListener('click', () => { viewingId = id; render(); });
+    item.addEventListener('click', () => { viewingId = m.id; render(); });
     view.append(item);
   }
 }
 
-async function renderSettings() {
+async function renderSettings(epoch) {
   const { settings = {} } = await chrome.storage.local.get('settings');
+  if (epoch !== renderEpoch) return;
   view.replaceChildren();
   view.append(el('h2', null, 'Settings'));
 
