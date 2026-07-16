@@ -36,5 +36,5 @@ masuk 30 detik.
 ## Test
 
 ```bash
-node --test test/merge.test.mjs
+node --test test/*.test.mjs
 ```
