@@ -41,6 +41,18 @@ test('formatMarkdown berisi judul, segmen, dan MoM bila ada', () => {
   assert.ok(md.includes('ringkasan'));
 });
 
+test('formatTranscript tanpa speaker (mode audio)', () => {
+  const t = new Date(2026, 0, 1, 9, 5, 7).getTime();
+  assert.equal(formatTranscript([{ id: 1, speaker: '', text: 'halo', t }]), '[09:05:07] halo');
+});
+
+test('formatMarkdown tanpa speaker tidak menulis ****', () => {
+  const t = new Date(2026, 0, 1, 9, 5, 7).getTime();
+  const md = formatMarkdown({ title: 'x', startedAt: t, mom: null, segments: [{ id: 1, speaker: '', text: 'halo', t }] });
+  assert.ok(md.includes('- (09:05:07): halo'));
+  assert.ok(!md.includes('****'));
+});
+
 test('formatMarkdown tanpa MoM tidak menulis heading MoM', () => {
   const md = formatMarkdown({ title: 'x', startedAt: 0, segments: [], mom: null });
   assert.ok(!md.includes('## MoM'));

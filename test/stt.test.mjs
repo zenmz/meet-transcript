@@ -1,0 +1,44 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+await import('../lib/stt.js'); // classic script: set globalThis.MeetStt
+const { parseSttResponse, mergeSttChunks } = globalThis.MeetStt;
+
+test('parseSttResponse verbose_json', () => {
+  const r = parseSttResponse('{"segments":[{"start":1.5,"text":"halo"},{"start":3,"text":"dunia"}]}');
+  assert.deepEqual(r, { segments: [{ start: 1.5, text: 'halo' }, { start: 3, text: 'dunia' }] });
+});
+
+test('parseSttResponse fallback {text}', () => {
+  assert.deepEqual(parseSttResponse('{"text":"halo dunia"}'), { segments: [{ start: 0, text: 'halo dunia' }] });
+});
+
+test('parseSttResponse objek langsung (bukan string)', () => {
+  assert.deepEqual(parseSttResponse({ segments: [{ start: 0, text: 'a' }] }), { segments: [{ start: 0, text: 'a' }] });
+});
+
+test('parseSttResponse tak terparse → segments kosong', () => {
+  assert.deepEqual(parseSttResponse('bukan json'), { segments: [] });
+});
+
+test('mergeSttChunks offset antar chunk + baseTime', () => {
+  const base = 1000000;
+  const chunks = [
+    { segments: [{ start: 0, text: 'satu' }, { start: 2, text: 'dua' }] },
+    { segments: [{ start: 1, text: 'tiga' }] },
+  ];
+  const out = mergeSttChunks(chunks, 600000, base);
+  assert.deepEqual(out, [
+    { t: base + 0, speaker: '', text: 'satu' },
+    { t: base + 2000, speaker: '', text: 'dua' },
+    { t: base + 600000 + 1000, speaker: '', text: 'tiga' },
+  ]);
+});
+
+test('mergeSttChunks chunk error → penanda, segmen kosong dilewati', () => {
+  const out = mergeSttChunks([{ error: 'gagal' }, { segments: [{ start: 0, text: '' }, { start: 1, text: 'ok' }] }], 600000, 0);
+  assert.deepEqual(out, [
+    { t: 0, speaker: '', text: '[transkrip gagal]' },
+    { t: 601000, speaker: '', text: 'ok' },
+  ]);
+});

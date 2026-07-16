@@ -4,6 +4,9 @@ const view = document.getElementById('view');
 let tab = 'live';
 let viewingId = null; // di tab Riwayat: meeting yang sedang dibuka
 let status = { id: null, inCall: false, captionsOn: false, lastSegmentAt: 0, captionsOnAt: 0 };
+let recState = { recording: false, transcribing: false, done: 0, total: 0, error: null };
+let settingsCache = {};
+async function loadSettings() { settingsCache = (await chrome.storage.local.get('settings')).settings ?? {}; }
 
 // el(): SELALU textContent — teks caption/nama pembicara tidak dipercaya.
 const el = (tag, cls, text) => {
@@ -28,6 +31,10 @@ chrome.runtime.onMessage.addListener((msg) => {
     if (tab === 'live') render();
   } else if (msg.type === 'meeting-updated') {
     if ((tab === 'live' && msg.id === status.id) || (tab === 'history' && msg.id === viewingId)) render();
+  } else if (msg.type === 'rec-state') {
+    recState = { recording: msg.recording, transcribing: msg.transcribing,
+      done: msg.done ?? 0, total: msg.total ?? 0, error: msg.error ?? null };
+    if (tab === 'live') render();
   }
 });
 
@@ -44,6 +51,20 @@ function download(name, text) {
   a.click();
   // Revoke ditunda: dialog "Save as" baru membaca blob setelah click() kembali.
   setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+}
+
+async function startRecording(btn) {
+  btn.disabled = true;
+  const tabId = status.tabId;
+  if (!tabId) { recState = { ...recState, error: 'Tab Meet tidak terdeteksi. Join meeting dulu.' }; return render(); }
+  try {
+    // getMediaStreamId dipanggil di konteks gesture klik (wajib untuk tabCapture).
+    const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+    await chrome.runtime.sendMessage({ type: 'start-recording', streamId, meetingId: status.id, tabId });
+  } catch (e) {
+    recState = { ...recState, error: 'Gagal mulai rekam: ' + e.message };
+    render();
+  }
 }
 
 // Epoch guard: render async saling balapan (klik tab vs broadcast SW);
@@ -70,12 +91,30 @@ async function renderMeeting(id, live, epoch) {
   const prevTop = sameView ? view.scrollTop : 0;
   view.replaceChildren();
 
-  if (live && status.inCall && !status.captionsOn) {
+  if (live && (settingsCache.transcriptSource === 'audio')) {
+    const bar = el('div', 'actions');
+    if (recState.transcribing) {
+      bar.append(el('span', 'muted',
+        recState.total ? `Mentranskrip… ${recState.done}/${recState.total}` : 'Mentranskrip…'));
+    } else if (recState.recording) {
+      const stop = el('button', null, 'Stop rekam');
+      stop.addEventListener('click', () => chrome.runtime.sendMessage({ type: 'stop-recording' }));
+      bar.append(stop, el('span', 'muted', ' ● merekam'));
+    } else {
+      const startBtn = el('button', null, 'Mulai rekam');
+      startBtn.addEventListener('click', () => startRecording(startBtn));
+      bar.append(startBtn);
+    }
+    if (recState.error) bar.append(el('div', 'err', ' ' + recState.error));
+    view.append(bar);
+  }
+
+  if (settingsCache.transcriptSource !== 'audio' && live && status.inCall && !status.captionsOn) {
     view.append(el('div', 'warn',
       'Caption mati. Nyalakan CC di toolbar Meet supaya transkrip terisi.'));
   }
   const quietSince = Math.max(status.lastSegmentAt || 0, status.captionsOnAt || 0);
-  if (live && status.inCall && status.captionsOn && quietSince && Date.now() - quietSince > 30000) {
+  if (settingsCache.transcriptSource !== 'audio' && live && status.inCall && status.captionsOn && quietSince && Date.now() - quietSince > 30000) {
     view.append(el('div', 'warn',
       'Caption nyala tapi tidak ada teks masuk 30 detik terakhir. Kalau ada yang bicara, kemungkinan DOM Meet berubah — perbaiki content/selectors.js.'));
   }
@@ -184,6 +223,17 @@ async function renderSettings(epoch) {
   const template = field('Template MoM ({{transcript}} = transkrip)',
     Object.assign(document.createElement('textarea'), { value: settings.momTemplate ?? M.DEFAULT_MOM_TEMPLATE }));
 
+  const source = field('Sumber transkrip',
+    Object.assign(document.createElement('select'), { innerHTML: '' }));
+  for (const [val, label] of [['caption', 'Caption Meet'], ['audio', 'Rekam audio']]) {
+    source.append(Object.assign(document.createElement('option'), { value: val, textContent: label }));
+  }
+  source.value = settings.transcriptSource ?? 'caption';
+  const sttModel = field('Model STT (mode audio)',
+    Object.assign(document.createElement('input'), { value: settings.sttModel ?? 'nvidia/parakeet-ctc-1.1b-asr' }));
+  const sttLanguage = field('Bahasa STT (mis. id, en — kosong = auto)',
+    Object.assign(document.createElement('input'), { value: settings.sttLanguage ?? '' }));
+
   const note = el('span', 'muted', '');
   const setNote = (cls, text) => { note.className = cls; note.textContent = ' ' + text; };
 
@@ -241,6 +291,9 @@ async function renderSettings(epoch) {
         baseUrl: base,
         model: model.value.trim() || 'gpt-4o-mini',
         momTemplate: template.value,
+        transcriptSource: source.value,
+        sttModel: sttModel.value.trim() || 'nvidia/parakeet-ctc-1.1b-asr',
+        sttLanguage: sttLanguage.value.trim(),
       },
     });
     if (warning) setNote('err', `Tersimpan, tapi ${warning} Request bisa gagal.`);
@@ -252,8 +305,14 @@ async function renderSettings(epoch) {
   view.append(actions);
 }
 
+chrome.storage.onChanged.addListener((c, area) => {
+  if (area === 'local' && c.settings) { settingsCache = c.settings.newValue ?? {}; if (tab === 'live') render(); }
+});
+
 (async () => {
+  await loadSettings();
   const a = await chrome.runtime.sendMessage({ type: 'get-active' }).catch(() => null);
   if (a) status = a;
+  if (a?.rec) recState = { ...recState, recording: a.rec.recording, transcribing: a.rec.transcribing };
   render();
 })();

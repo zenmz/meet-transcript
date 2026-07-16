@@ -4,6 +4,12 @@
   const meetingId = location.pathname.slice(1);
   if (!/^[a-z]{3}-[a-z]{4}-[a-z]{3}$/.test(meetingId)) return; // bukan halaman call
 
+  let sourceMode = 'caption';
+  chrome.storage.local.get('settings').then((d) => { sourceMode = d.settings?.transcriptSource ?? 'caption'; });
+  chrome.storage.onChanged.addListener((c, area) => {
+    if (area === 'local' && c.settings) sourceMode = c.settings.newValue?.transcriptSource ?? 'caption';
+  });
+
   let port = null;
   let statusTimer = null;
   let flushTimer = null;
@@ -74,7 +80,7 @@
       observer = null;
       observedRegion = null;
     }
-    if (!region && S.inCall() && !S.ccEnabled() && ccAttempts < 3) {
+    if (sourceMode !== 'audio' && !region && S.inCall() && !S.ccEnabled() && ccAttempts < 3) {
       S.ccButton()?.click(); // coba nyalakan CC otomatis
       ccAttempts++;
     }
@@ -83,6 +89,7 @@
 
   // Flush 500ms: kirim hanya segmen yang berubah; batch gagal di-retry tick berikutnya.
   flushTimer = setInterval(() => {
+    if (sourceMode === 'audio') { dirty.clear(); return; }
     if (!dirty.size) return;
     const sent = post({ type: 'segments', meetingId, title: S.meetingTitle(), segs: [...dirty.values()] });
     if (sent) dirty.clear();

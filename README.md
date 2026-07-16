@@ -20,6 +20,21 @@ riwayat meeting, download .txt/.md, dan generate MoM via OpenAI.
 5. Tab **Riwayat**: semua meeting tersimpan lokal (`chrome.storage.local`),
    bisa dibuka/di-download lagi.
 
+## Mode transkrip audio (tanpa caption)
+
+Alternatif bila tak ingin menyalakan caption Meet: rekam audio tab lalu
+transkrip via STT.
+
+1. Settings → **Sumber transkrip** = **Rekam audio**. Isi **Model STT**
+   (mis. `nvidia/parakeet-ctc-1.1b-asr`) dan **Bahasa STT** (mis. `id`).
+   Base URL & API key sama dengan MoM.
+2. Join Meet → tab Live → **Mulai rekam** (audio meeting tetap terdengar).
+3. **Stop rekam** → audio ditranskrip per potongan → transkrip muncul
+   (teks + waktu, tanpa nama pembicara). Audio tidak disimpan.
+
+Catatan: transkrip baru muncul setelah Stop (bukan live). Hanya audio tab
+(peserta) yang direkam, mic sendiri tidak.
+
 ## Batasan v1
 
 - Transkrip bersumber dari caption Meet — caption harus nyala, akurasi ikut Google.

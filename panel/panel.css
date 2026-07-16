@@ -19,5 +19,5 @@ button:disabled { opacity: .5; }
 .item { display: block; width: 100%; text-align: left; margin-bottom: 6px; padding: 8px; }
 .mom { white-space: pre-wrap; background: #f6f8fa; padding: 8px; border-radius: 6px; }
 label { display: block; font-weight: 600; margin-top: 8px; }
-textarea, input { width: 100%; box-sizing: border-box; margin: 4px 0 4px; padding: 6px; border: 1px solid #ccc; border-radius: 6px; font: inherit; }
+textarea, input, select { width: 100%; box-sizing: border-box; margin: 4px 0 4px; padding: 6px; border: 1px solid #ccc; border-radius: 6px; font: inherit; }
 textarea { min-height: 160px; }
