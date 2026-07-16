@@ -11,11 +11,12 @@ function notifyPanel(msg) {
   chrome.runtime.sendMessage(msg).catch(() => {}); // panel tertutup → abaikan
 }
 
-// Badge "REC" di ikon toolbar: indikator merekam saat panel ditutup.
+// Titik merekam di ikon toolbar: indikator saat panel ditutup.
 chrome.action.setBadgeBackgroundColor({ color: '#d93025' });
+chrome.action.setBadgeTextColor?.({ color: '#ffffff' }); // titik putih di badge merah
 function updateBadge() {
   const recording = active.inCall && active.captionsOn;
-  chrome.action.setBadgeText({ text: recording ? 'REC' : '' });
+  chrome.action.setBadgeText({ text: recording ? '●' : '' });
 }
 
 async function saveSegments({ meetingId, title, segs }) {
