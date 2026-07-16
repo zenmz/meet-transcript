@@ -15,8 +15,62 @@ function notifyPanel(msg) {
 chrome.action.setBadgeBackgroundColor({ color: '#d93025' });
 chrome.action.setBadgeTextColor?.({ color: '#ffffff' }); // titik putih di badge merah
 function updateBadge() {
-  const recording = active.inCall && active.captionsOn;
+  const recording = (active.inCall && active.captionsOn) || rec.recording;
   chrome.action.setBadgeText({ text: recording ? '●' : '' });
+}
+
+// Mode audio: state rekaman + lifecycle offscreen document.
+let rec = { recording: false, transcribing: false, meetingId: null };
+
+function broadcastRec(extra = {}) {
+  notifyPanel({ type: 'rec-state', recording: rec.recording, transcribing: rec.transcribing, ...extra });
+}
+
+async function ensureOffscreen() {
+  if (await chrome.offscreen.hasDocument?.()) return;
+  await chrome.offscreen.createDocument({
+    url: 'offscreen/offscreen.html',
+    reasons: ['USER_MEDIA'],
+    justification: 'Merekam audio tab Meet untuk transkrip.',
+  });
+}
+
+async function startRecording({ streamId, meetingId }) {
+  const { settings = {} } = await chrome.storage.local.get('settings');
+  await ensureOffscreen();
+  rec = { recording: true, transcribing: false, meetingId };
+  updateBadge();
+  broadcastRec();
+  chrome.runtime.sendMessage({
+    target: 'offscreen', op: 'start', streamId, meetingId,
+    baseUrl: settings.baseUrl, apiKey: settings.apiKey,
+    sttModel: settings.sttModel || 'nvidia/parakeet-ctc-1.1b-asr',
+    sttLanguage: settings.sttLanguage || '', chunkMs: 600000, baseTime: Date.now(),
+  });
+}
+
+function stopRecording() {
+  if (!rec.recording) return;
+  rec.recording = false;
+  rec.transcribing = true;
+  updateBadge();
+  broadcastRec();
+  chrome.runtime.sendMessage({ target: 'offscreen', op: 'stop' });
+}
+
+async function saveAudioTranscript({ meetingId, segments }) {
+  const key = 'meeting:' + meetingId;
+  const data = await chrome.storage.local.get([key, 'meetings']);
+  const meeting = data[key] ?? {
+    id: meetingId, title: meetingId, startedAt: Date.now(), endedAt: null, segments: [], mom: null,
+  };
+  meeting.source = 'audio';
+  for (const seg of segments) globalThis.MeetMerge.upsertSegment(meeting.segments,
+    { ...seg, id: `audio:${seg.t}:${meeting.segments.length}` });
+  const meetings = data.meetings ?? [];
+  if (!meetings.includes(meetingId)) meetings.unshift(meetingId);
+  await chrome.storage.local.set({ [key]: meeting, meetings });
+  notifyPanel({ type: 'meeting-updated', id: meetingId });
 }
 
 async function saveSegments({ meetingId, title, segs }) {
@@ -115,7 +169,8 @@ chrome.runtime.onConnect.addListener((port) => {
       const canClaim = msg.inCall || active.id === msg.meetingId || !active.inCall || !active.id;
       if (!canClaim) return;
       if (msg.captionsOn && !active.captionsOn) active.captionsOnAt = Date.now();
-      active = { ...active, id: msg.meetingId, inCall: msg.inCall, captionsOn: msg.captionsOn };
+      active = { ...active, id: msg.meetingId, inCall: msg.inCall, captionsOn: msg.captionsOn,
+        tabId: port.sender?.tab?.id ?? active.tabId };
       updateBadge();
       notifyPanel({ type: 'status', ...active });
     }
@@ -137,4 +192,32 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     );
     return true; // sendResponse async
   }
+  if (msg.type === 'start-recording') {
+    startRecording(msg).catch((e) => broadcastRec({ error: e.message, recording: false }));
+    return false;
+  }
+  if (msg.type === 'stop-recording') {
+    stopRecording();
+    return false;
+  }
+  if (msg.type === 'audio-progress') {
+    broadcastRec({ done: msg.done, total: msg.total });
+    return false;
+  }
+  if (msg.type === 'audio-transcript') {
+    rec = { recording: false, transcribing: false, meetingId: null };
+    updateBadge();
+    enqueueWrite(() => saveAudioTranscript(msg));
+    broadcastRec();
+    chrome.offscreen.closeDocument?.().catch(() => {});
+    return false;
+  }
+  if (msg.type === 'audio-error') {
+    rec = { recording: false, transcribing: false, meetingId: null };
+    updateBadge();
+    broadcastRec({ error: msg.error });
+    chrome.offscreen.closeDocument?.().catch(() => {});
+    return false;
+  }
+  return false;
 });
