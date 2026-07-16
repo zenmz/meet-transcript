@@ -53,20 +53,6 @@ function download(name, text) {
   setTimeout(() => URL.revokeObjectURL(a.href), 60000);
 }
 
-async function startRecording(btn) {
-  btn.disabled = true;
-  const tabId = status.tabId;
-  if (!tabId) { recState = { ...recState, error: 'Tab Meet tidak terdeteksi. Join meeting dulu.' }; return render(); }
-  try {
-    // getMediaStreamId dipanggil di konteks gesture klik (wajib untuk tabCapture).
-    const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
-    await chrome.runtime.sendMessage({ type: 'start-recording', streamId, meetingId: status.id, tabId });
-  } catch (e) {
-    recState = { ...recState, error: 'Gagal mulai rekam: ' + e.message };
-    render();
-  }
-}
-
 // Epoch guard: render async saling balapan (klik tab vs broadcast SW);
 // pass yang kalah cepat tidak boleh menimpa DOM pass yang lebih baru.
 let renderEpoch = 0;
@@ -101,9 +87,9 @@ async function renderMeeting(id, live, epoch) {
       stop.addEventListener('click', () => chrome.runtime.sendMessage({ type: 'stop-recording' }));
       bar.append(stop, el('span', 'muted', ' ● merekam'));
     } else {
-      const startBtn = el('button', null, 'Mulai rekam');
-      startBtn.addEventListener('click', () => startRecording(startBtn));
-      bar.append(startBtn);
+      // tabCapture butuh invocation activeTab yang tidak diberikan tombol side
+      // panel (batasan Chrome) — start dipicu dari context menu halaman Meet.
+      bar.append(el('span', 'muted', 'Untuk mulai: klik kanan di halaman Meet → "Rekam audio meeting".'));
     }
     if (recState.error) bar.append(el('div', 'err', ' ' + recState.error));
     view.append(bar);
