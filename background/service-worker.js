@@ -11,6 +11,13 @@ function notifyPanel(msg) {
   chrome.runtime.sendMessage(msg).catch(() => {}); // panel tertutup → abaikan
 }
 
+// Badge "REC" di ikon toolbar: indikator merekam saat panel ditutup.
+chrome.action.setBadgeBackgroundColor({ color: '#d93025' });
+function updateBadge() {
+  const recording = active.inCall && active.captionsOn;
+  chrome.action.setBadgeText({ text: recording ? 'REC' : '' });
+}
+
 async function saveSegments({ meetingId, title, segs }) {
   const key = 'meeting:' + meetingId;
   const data = await chrome.storage.local.get([key, 'meetings']);
@@ -35,6 +42,7 @@ async function endMeeting(meetingId) {
   await chrome.storage.local.set({ [key]: data[key] });
   if (active.id === meetingId) {
     active = { id: null, inCall: false, captionsOn: false, lastSegmentAt: 0, captionsOnAt: 0 };
+    updateBadge();
     notifyPanel({ type: 'status', ...active });
   }
   notifyPanel({ type: 'meeting-updated', id: meetingId });
@@ -107,6 +115,7 @@ chrome.runtime.onConnect.addListener((port) => {
       if (!canClaim) return;
       if (msg.captionsOn && !active.captionsOn) active.captionsOnAt = Date.now();
       active = { ...active, id: msg.meetingId, inCall: msg.inCall, captionsOn: msg.captionsOn };
+      updateBadge();
       notifyPanel({ type: 'status', ...active });
     }
   });
