@@ -184,6 +184,17 @@ async function renderSettings(epoch) {
   const template = field('Template MoM ({{transcript}} = transkrip)',
     Object.assign(document.createElement('textarea'), { value: settings.momTemplate ?? M.DEFAULT_MOM_TEMPLATE }));
 
+  const source = field('Sumber transkrip',
+    Object.assign(document.createElement('select'), { innerHTML: '' }));
+  for (const [val, label] of [['caption', 'Caption Meet'], ['audio', 'Rekam audio']]) {
+    source.append(Object.assign(document.createElement('option'), { value: val, textContent: label }));
+  }
+  source.value = settings.transcriptSource ?? 'caption';
+  const sttModel = field('Model STT (mode audio)',
+    Object.assign(document.createElement('input'), { value: settings.sttModel ?? 'nvidia/parakeet-ctc-1.1b-asr' }));
+  const sttLanguage = field('Bahasa STT (mis. id, en — kosong = auto)',
+    Object.assign(document.createElement('input'), { value: settings.sttLanguage ?? '' }));
+
   const note = el('span', 'muted', '');
   const setNote = (cls, text) => { note.className = cls; note.textContent = ' ' + text; };
 
@@ -241,6 +252,9 @@ async function renderSettings(epoch) {
         baseUrl: base,
         model: model.value.trim() || 'gpt-4o-mini',
         momTemplate: template.value,
+        transcriptSource: source.value,
+        sttModel: sttModel.value.trim() || 'nvidia/parakeet-ctc-1.1b-asr',
+        sttLanguage: sttLanguage.value.trim(),
       },
     });
     if (warning) setNote('err', `Tersimpan, tapi ${warning} Request bisa gagal.`);
