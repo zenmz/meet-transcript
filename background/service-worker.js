@@ -61,7 +61,8 @@ async function startRecording({ streamId, meetingId }) {
 }
 
 async function stopRecording() {
-  if (!rec.recording && !(await hasOffscreen())) return;
+  // rec.transcribing → stop kedua (double-click) diblok: cegah transkrip dobel.
+  if (rec.transcribing || (!rec.recording && !(await hasOffscreen()))) return;
   rec.recording = false;
   rec.transcribing = true;
   updateBadge();
