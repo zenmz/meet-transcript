@@ -5,7 +5,6 @@ let stream = null;
 let recorder = null;
 let rotateTimer = null;
 let chunkBlobs = [];   // Blob standalone per chunk
-let chunkData = [];    // potongan dataavailable chunk berjalan
 let cfg = null;        // {baseUrl, apiKey, sttModel, sttLanguage, chunkMs, baseTime, meetingId}
 const MIME = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
   ? 'audio/webm;codecs=opus' : 'audio/webm';
@@ -13,10 +12,10 @@ const MIME = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
 function toSW(msg) { chrome.runtime.sendMessage(msg); }
 
 function startChunkRecorder() {
-  chunkData = [];
+  const data = []; // per-recorder: rotasi tak boleh menabrak data recorder lain
   recorder = new MediaRecorder(stream, { mimeType: MIME });
-  recorder.ondataavailable = (e) => { if (e.data.size) chunkData.push(e.data); };
-  recorder.onstop = () => { chunkBlobs.push(new Blob(chunkData, { type: MIME })); };
+  recorder.ondataavailable = (e) => { if (e.data.size) data.push(e.data); };
+  recorder.onstop = () => { chunkBlobs.push(new Blob(data, { type: MIME })); };
   recorder.start();
 }
 
@@ -27,6 +26,10 @@ function rotateChunk() {
 }
 
 async function start(msg) {
+  if (rotateTimer) { clearInterval(rotateTimer); rotateTimer = null; }
+  if (recorder && recorder.state !== 'inactive') recorder.stop();
+  stream?.getTracks().forEach((t) => t.stop());
+  await audioCtx?.close().catch(() => {});
   cfg = msg;
   chunkBlobs = [];
   stream = await navigator.mediaDevices.getUserMedia({
@@ -35,6 +38,7 @@ async function start(msg) {
   // Re-inject: tabCapture membisukan tab; putar balik ke speaker.
   audioCtx = new AudioContext();
   audioCtx.createMediaStreamSource(stream).connect(audioCtx.destination);
+  if (audioCtx.state === 'suspended') await audioCtx.resume(); // tanpa ini tab bisa senyap
   startChunkRecorder();
   rotateTimer = setInterval(rotateChunk, msg.chunkMs);
 }
