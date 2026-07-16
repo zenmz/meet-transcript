@@ -193,7 +193,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true; // sendResponse async
   }
   if (msg.type === 'start-recording') {
-    startRecording(msg).catch((e) => broadcastRec({ error: e.message, recording: false }));
+    startRecording(msg).catch((e) => {
+      // Gagal setelah rec di-set → reset state + badge, jangan tinggalkan stuck.
+      rec = { recording: false, transcribing: false, meetingId: null };
+      updateBadge();
+      broadcastRec({ error: e.message });
+    });
     return false;
   }
   if (msg.type === 'stop-recording') {
