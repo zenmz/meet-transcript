@@ -67,6 +67,12 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === 'rec-start') {
+    // Cek sebelum getMediaStreamId: klik saat sudah merekam tak boleh masuk
+    // catch (yang akan reset state palsu padahal rekaman jalan terus).
+    if (rec.recording || rec.transcribing || await hasOffscreen()) {
+      broadcastRec({ error: 'Rekaman masih berjalan.' });
+      return;
+    }
     const meetingId = meetingIdFromUrl(tab?.url) || active.id;
     if (!meetingId) { broadcastRec({ error: 'Bukan halaman meeting aktif.' }); return; }
     try {
