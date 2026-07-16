@@ -43,6 +43,45 @@ async function ensureOffscreen() {
   });
 }
 
+// Start rekam dipicu dari context menu halaman Meet: klik context menu memberi
+// invocation activeTab yang dibutuhkan tabCapture.getMediaStreamId — tombol
+// side panel tidak (batasan Chrome).
+const MEET_RE = /^[a-z]{3}-[a-z]{4}-[a-z]{3}$/;
+function meetingIdFromUrl(url) {
+  try {
+    const p = new URL(url).pathname.slice(1);
+    return MEET_RE.test(p) ? p : null;
+  } catch {
+    return null;
+  }
+}
+
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({ id: 'rec-start', title: 'Rekam audio meeting',
+      contexts: ['page'], documentUrlPatterns: ['https://meet.google.com/*'] });
+    chrome.contextMenus.create({ id: 'rec-stop', title: 'Stop rekam audio',
+      contexts: ['page'], documentUrlPatterns: ['https://meet.google.com/*'] });
+  });
+});
+
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId === 'rec-start') {
+    const meetingId = meetingIdFromUrl(tab?.url) || active.id;
+    if (!meetingId) { broadcastRec({ error: 'Bukan halaman meeting aktif.' }); return; }
+    try {
+      const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
+      await startRecording({ streamId, meetingId });
+    } catch (e) {
+      rec = { recording: false, transcribing: false, meetingId: null };
+      updateBadge();
+      broadcastRec({ error: e.message });
+    }
+  } else if (info.menuItemId === 'rec-stop') {
+    stopRecording();
+  }
+});
+
 async function startRecording({ streamId, meetingId }) {
   if (rec.recording || rec.transcribing || await hasOffscreen()) {
     throw new Error('Rekaman masih berjalan.');
