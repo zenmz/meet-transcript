@@ -4,6 +4,9 @@ const view = document.getElementById('view');
 let tab = 'live';
 let viewingId = null; // di tab Riwayat: meeting yang sedang dibuka
 let status = { id: null, inCall: false, captionsOn: false, lastSegmentAt: 0, captionsOnAt: 0 };
+let recState = { recording: false, transcribing: false, done: 0, total: 0, error: null };
+let settingsCache = {};
+async function loadSettings() { settingsCache = (await chrome.storage.local.get('settings')).settings ?? {}; }
 
 // el(): SELALU textContent — teks caption/nama pembicara tidak dipercaya.
 const el = (tag, cls, text) => {
@@ -28,6 +31,10 @@ chrome.runtime.onMessage.addListener((msg) => {
     if (tab === 'live') render();
   } else if (msg.type === 'meeting-updated') {
     if ((tab === 'live' && msg.id === status.id) || (tab === 'history' && msg.id === viewingId)) render();
+  } else if (msg.type === 'rec-state') {
+    recState = { recording: msg.recording, transcribing: msg.transcribing,
+      done: msg.done ?? 0, total: msg.total ?? 0, error: msg.error ?? null };
+    if (tab === 'live') render();
   }
 });
 
@@ -44,6 +51,20 @@ function download(name, text) {
   a.click();
   // Revoke ditunda: dialog "Save as" baru membaca blob setelah click() kembali.
   setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+}
+
+async function startRecording(btn) {
+  btn.disabled = true;
+  const tabId = status.tabId;
+  if (!tabId) { recState = { ...recState, error: 'Tab Meet tidak terdeteksi. Join meeting dulu.' }; return render(); }
+  try {
+    // getMediaStreamId dipanggil di konteks gesture klik (wajib untuk tabCapture).
+    const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+    await chrome.runtime.sendMessage({ type: 'start-recording', streamId, meetingId: status.id, tabId });
+  } catch (e) {
+    recState = { ...recState, error: 'Gagal mulai rekam: ' + e.message };
+    render();
+  }
 }
 
 // Epoch guard: render async saling balapan (klik tab vs broadcast SW);
@@ -69,6 +90,24 @@ async function renderMeeting(id, live, epoch) {
   const stickToBottom = live && (!sameView || view.scrollHeight - view.scrollTop - view.clientHeight < 40);
   const prevTop = sameView ? view.scrollTop : 0;
   view.replaceChildren();
+
+  if (live && (settingsCache.transcriptSource === 'audio')) {
+    const bar = el('div', 'actions');
+    if (recState.transcribing) {
+      bar.append(el('span', 'muted',
+        recState.total ? `Mentranskrip… ${recState.done}/${recState.total}` : 'Mentranskrip…'));
+    } else if (recState.recording) {
+      const stop = el('button', null, 'Stop rekam');
+      stop.addEventListener('click', () => chrome.runtime.sendMessage({ type: 'stop-recording' }));
+      bar.append(stop, el('span', 'muted', ' ● merekam'));
+    } else {
+      const startBtn = el('button', null, 'Mulai rekam');
+      startBtn.addEventListener('click', () => startRecording(startBtn));
+      bar.append(startBtn);
+    }
+    if (recState.error) bar.append(el('div', 'err', ' ' + recState.error));
+    view.append(bar);
+  }
 
   if (live && status.inCall && !status.captionsOn) {
     view.append(el('div', 'warn',
@@ -266,7 +305,12 @@ async function renderSettings(epoch) {
   view.append(actions);
 }
 
+chrome.storage.onChanged.addListener((c, area) => {
+  if (area === 'local' && c.settings) { settingsCache = c.settings.newValue ?? {}; if (tab !== 'history') render(); }
+});
+
 (async () => {
+  await loadSettings();
   const a = await chrome.runtime.sendMessage({ type: 'get-active' }).catch(() => null);
   if (a) status = a;
   render();
