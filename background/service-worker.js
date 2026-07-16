@@ -26,8 +26,16 @@ function broadcastRec(extra = {}) {
   notifyPanel({ type: 'rec-state', recording: rec.recording, transcribing: rec.transcribing, ...extra });
 }
 
+async function hasOffscreen() {
+  if (chrome.runtime.getContexts) {
+    const c = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] }).catch(() => []);
+    return c.length > 0;
+  }
+  return chrome.offscreen.hasDocument ? await chrome.offscreen.hasDocument().catch(() => false) : false;
+}
+
 async function ensureOffscreen() {
-  if (await chrome.offscreen.hasDocument?.()) return;
+  if (await hasOffscreen()) return;
   await chrome.offscreen.createDocument({
     url: 'offscreen/offscreen.html',
     reasons: ['USER_MEDIA'],
@@ -36,6 +44,9 @@ async function ensureOffscreen() {
 }
 
 async function startRecording({ streamId, meetingId }) {
+  if (rec.recording || rec.transcribing || await hasOffscreen()) {
+    throw new Error('Rekaman masih berjalan.');
+  }
   const { settings = {} } = await chrome.storage.local.get('settings');
   await ensureOffscreen();
   rec = { recording: true, transcribing: false, meetingId };
@@ -49,8 +60,8 @@ async function startRecording({ streamId, meetingId }) {
   });
 }
 
-function stopRecording() {
-  if (!rec.recording) return;
+async function stopRecording() {
+  if (!rec.recording && !(await hasOffscreen())) return;
   rec.recording = false;
   rec.transcribing = true;
   updateBadge();
@@ -176,13 +187,14 @@ chrome.runtime.onConnect.addListener((port) => {
     }
   });
   port.onDisconnect.addListener(() => {
+    if (rec.recording && rec.meetingId === meetingId) stopRecording();
     if (meetingId) enqueueWrite(() => endMeeting(meetingId));
   });
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'get-active') {
-    sendResponse(active);
+    sendResponse({ ...active, rec });
     return false;
   }
   if (msg.type === 'generate-mom') {

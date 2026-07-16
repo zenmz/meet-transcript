@@ -109,12 +109,12 @@ async function renderMeeting(id, live, epoch) {
     view.append(bar);
   }
 
-  if (live && status.inCall && !status.captionsOn) {
+  if (settingsCache.transcriptSource !== 'audio' && live && status.inCall && !status.captionsOn) {
     view.append(el('div', 'warn',
       'Caption mati. Nyalakan CC di toolbar Meet supaya transkrip terisi.'));
   }
   const quietSince = Math.max(status.lastSegmentAt || 0, status.captionsOnAt || 0);
-  if (live && status.inCall && status.captionsOn && quietSince && Date.now() - quietSince > 30000) {
+  if (settingsCache.transcriptSource !== 'audio' && live && status.inCall && status.captionsOn && quietSince && Date.now() - quietSince > 30000) {
     view.append(el('div', 'warn',
       'Caption nyala tapi tidak ada teks masuk 30 detik terakhir. Kalau ada yang bicara, kemungkinan DOM Meet berubah — perbaiki content/selectors.js.'));
   }
@@ -306,12 +306,13 @@ async function renderSettings(epoch) {
 }
 
 chrome.storage.onChanged.addListener((c, area) => {
-  if (area === 'local' && c.settings) { settingsCache = c.settings.newValue ?? {}; if (tab !== 'history') render(); }
+  if (area === 'local' && c.settings) { settingsCache = c.settings.newValue ?? {}; if (tab === 'live') render(); }
 });
 
 (async () => {
   await loadSettings();
   const a = await chrome.runtime.sendMessage({ type: 'get-active' }).catch(() => null);
   if (a) status = a;
+  if (a?.rec) recState = { ...recState, recording: a.rec.recording, transcribing: a.rec.transcribing };
   render();
 })();
