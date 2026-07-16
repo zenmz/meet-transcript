@@ -27,7 +27,7 @@ function rotateChunk() {
 
 async function start(msg) {
   if (rotateTimer) { clearInterval(rotateTimer); rotateTimer = null; }
-  if (recorder && recorder.state !== 'inactive') recorder.stop();
+  if (recorder && recorder.state !== 'inactive') { recorder.onstop = null; recorder.stop(); }
   stream?.getTracks().forEach((t) => t.stop());
   await audioCtx?.close().catch(() => {});
   cfg = msg;
