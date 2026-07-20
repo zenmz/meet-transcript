@@ -266,8 +266,12 @@ async function renderSettings(epoch) {
   async function ensureOrigins(bases) {
     const patterns = [];
     for (const b of bases) {
+      // new URL() saja terlalu longgar: "localhost:8080/v1" (skema lupa diketik)
+      // ikut parse jadi protocol "localhost:" + hostname kosong, lolos ke
+      // permissions.request sebagai pattern rusak. Wajib http/https + hostname.
       let u;
-      try { u = new URL(b); } catch { throw new Error(`URL tidak valid: ${b}`); }
+      try { u = new URL(b); } catch { u = null; }
+      if (!u || !/^https?:$/.test(u.protocol) || !u.hostname) throw new Error(`URL tidak valid: ${b}`);
       // Match pattern Chrome tidak boleh berisi port — pakai hostname saja
       // (pattern tanpa port otomatis mencakup semua port, mis. localhost:20128).
       const p = `${u.protocol}//${u.hostname}/*`;
