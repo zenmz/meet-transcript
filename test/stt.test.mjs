@@ -43,6 +43,23 @@ test('mergeSttChunks chunk error → penanda, segmen kosong dilewati', () => {
   ]);
 });
 
+test('sttMode: kosong/undefined → chat', () => {
+  assert.equal(globalThis.MeetStt.sttMode(''), 'chat');
+  assert.equal(globalThis.MeetStt.sttMode(undefined), 'chat');
+  assert.equal(globalThis.MeetStt.sttMode('   '), 'chat');
+});
+
+test('sttMode: host lokal → whisper (port apa pun)', () => {
+  assert.equal(globalThis.MeetStt.sttMode('http://localhost:8080/v1'), 'whisper');
+  assert.equal(globalThis.MeetStt.sttMode('http://127.0.0.1:9000/v1'), 'whisper');
+  assert.equal(globalThis.MeetStt.sttMode(globalThis.MeetStt.WHISPER_DEFAULT), 'whisper');
+});
+
+test('sttMode: host remote / URL rusak → api', () => {
+  assert.equal(globalThis.MeetStt.sttMode('https://api.openai.com/v1'), 'api');
+  assert.equal(globalThis.MeetStt.sttMode('bukan url'), 'api');
+});
+
 test('sttEndpoint: STT fields kosong → ikut endpoint utama', () => {
   assert.deepEqual(
     globalThis.MeetStt.sttEndpoint({ baseUrl: 'https://x/v1', apiKey: 'k' }),

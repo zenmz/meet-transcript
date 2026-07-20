@@ -249,10 +249,28 @@ async function renderSettings(epoch) {
     Object.assign(document.createElement('input'), { value: settings.sttModel ?? 'nvidia/parakeet-ctc-1.1b-asr' }));
   const sttLanguage = field('Bahasa STT (mis. id, en — kosong = auto)',
     Object.assign(document.createElement('input'), { value: settings.sttLanguage ?? '' }));
-  const sttBaseUrl = field('STT Base URL (kosong = ikut Base URL di atas; whisper lokal mis. http://localhost:8080/v1, atau URL 9Router)',
+  const sttModeSel = field('Mode STT (mode audio)',
+    Object.assign(document.createElement('select'), { innerHTML: '' }));
+  for (const [val, label] of [
+    ['chat', 'Ikut endpoint chat di atas'],
+    ['whisper', 'Whisper lokal'],
+    ['api', 'STT API terpisah (9Router / OpenAI)'],
+  ]) {
+    sttModeSel.append(Object.assign(document.createElement('option'), { value: val, textContent: label }));
+  }
+  sttModeSel.value = globalThis.MeetStt.sttMode(settings.sttBaseUrl);
+  const sttBaseUrl = field('STT Base URL',
     Object.assign(document.createElement('input'), { value: settings.sttBaseUrl ?? '' }));
   const sttApiKey = field('STT API key (kosong = tanpa auth)',
     Object.assign(document.createElement('input'), { type: 'password', value: settings.sttApiKey ?? '' }));
+
+  // Dropdown hanya prefill dua field di atas — yang disimpan & dipakai tetap
+  // sttBaseUrl, jadi user bebas mengedit URL tanpa mode ikut berubah.
+  sttModeSel.addEventListener('change', () => {
+    if (sttModeSel.value === 'chat') { sttBaseUrl.value = ''; sttApiKey.value = ''; }
+    else if (sttModeSel.value === 'whisper') sttBaseUrl.value = globalThis.MeetStt.WHISPER_DEFAULT;
+    else if (globalThis.MeetStt.sttMode(sttBaseUrl.value) !== 'api') sttBaseUrl.value = '';
+  });
 
   const note = el('span', 'muted', '');
   const setNote = (cls, text) => { note.className = cls; note.textContent = ' ' + text; };

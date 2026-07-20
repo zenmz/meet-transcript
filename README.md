@@ -35,11 +35,21 @@ transkrip via STT.
 Catatan: transkrip baru muncul setelah Stop (bukan live). Hanya audio tab
 (peserta) yang direkam, mic sendiri tidak.
 
-**STT Base URL terpisah**: di Settings, field **STT Base URL** kosong = ikut
-Base URL (OpenAI-compatible) di atas. Isi kalau STT dan chat butuh endpoint
-beda, mis. whisper lokal (`http://localhost:8080/v1`) atau proxy semacam
-9Router. Field **STT API key** di sampingnya: kosong = tanpa auth (whisper
-lokal); isi untuk 9Router atau proxy lain yang butuh otentikasi.
+**STT Base URL terpisah**: di Settings, dropdown **Mode STT** memilih dari mana
+transkrip audio diambil:
+
+- *Ikut endpoint chat di atas* — default, pakai Base URL + API key yang sama
+  dengan MoM.
+- *Whisper lokal* — mengisi `http://localhost:8080/v1`; ubah kalau server
+  whisper-mu di port lain. Biarkan STT API key kosong (server lokal tanpa auth).
+- *STT API terpisah (9Router / OpenAI)* — ketik URL endpoint sendiri dan isi
+  STT API key-nya.
+
+Dropdown hanya mengisikan dua field di bawahnya; yang benar-benar dipakai
+adalah **STT Base URL** dan **STT API key**, jadi URL boleh diedit bebas
+setelah memilih mode. Mode dihitung ulang dari URL saat Settings dibuka.
+STT API key kosong = request dikirim tanpa header `Authorization`; API key chat
+sengaja tidak ikut ke host STT lain.
 
 ## Tanpa API key: copy prompt atau kirim ke Gemini
 
