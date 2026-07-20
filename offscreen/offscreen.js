@@ -72,12 +72,18 @@ async function stopAndTranscribe() {
   try {
     clearInterval(rotateTimer);
     rotateTimer = null;
-    // Finalisasi chunk terakhir (tunggu onstop).
-    await new Promise((resolve) => {
-      if (!recorder || recorder.state === 'inactive') return resolve();
-      recorder.addEventListener('stop', resolve, { once: true });
-      recorder.stop();
-    });
+    // Finalisasi chunk terakhir (tunggu onstop), tapi jangan tanpa batas:
+    // kalau tab dibongkar di saat yang salah, event 'stop' bisa tak pernah
+    // datang — promise menggantung, finally tak jalan, dan busy macet true:
+    // stop & transkrip ulang ditolak selamanya sampai browser di-restart.
+    await Promise.race([
+      new Promise((resolve) => {
+        if (!recorder || recorder.state === 'inactive') return resolve();
+        recorder.addEventListener('stop', resolve, { once: true });
+        recorder.stop();
+      }),
+      new Promise((resolve) => setTimeout(resolve, 5000)), // 5s cukup untuk finalisasi satu chunk
+    ]);
     stream?.getTracks().forEach((t) => t.stop());
     await audioCtx?.close().catch(() => {});
     audioCtx = null; stream = null; recorder = null;

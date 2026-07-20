@@ -46,10 +46,14 @@ test('replaceAudioSegments mempertahankan segmen dari caption', () => {
   assert.equal(out[1].text, 'b');
 });
 
-test('replaceAudioSegments dengan hasil kosong membersihkan baris audio lama', () => {
-  const first = replaceAudioSegments([{ id: 'cap-1', text: 'x', speaker: 'Ani', t: 0 }], [audio(0, 'gagal')]);
+// Transkrip ulang dengan model STT yang balas 200 + teks kosong menghasilkan
+// nol segmen; transkrip lama yang sudah bagus tidak boleh ikut hilang.
+test('replaceAudioSegments dengan hasil kosong TIDAK menghapus transkrip lama', () => {
+  const first = replaceAudioSegments([{ id: 'cap-1', text: 'x', speaker: 'Ani', t: 0 }],
+    [audio(0, 'halo'), audio(1000, 'hai')]);
   const out = replaceAudioSegments(first, []);
-  assert.deepEqual(out.map((s) => s.id), ['cap-1']);
+  assert.deepEqual(out.map((s) => s.id), ['cap-1', 'audio:0', 'audio:1']);
+  assert.deepEqual(out.map((s) => s.text), ['x', 'halo', 'hai']);
 });
 
 test('formatTranscript satu baris per segmen', () => {

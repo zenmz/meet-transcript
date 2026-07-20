@@ -128,7 +128,6 @@ async function startRecording({ streamId, meetingId }) {
 // SW MV3 bisa dimatikan di tengah loop upload yang panjang).
 async function regenerateTranscript(meetingId) {
   if (rec.recording || rec.transcribing) throw new Error('Rekaman/transkrip masih berjalan.');
-  // Cek hasOffscreen() ada DI DALAM try di bawah supaya catch mengembalikan rec.
   // rec di-set SEBELUM await pertama: ini satu-satunya penyerialisasi transkrip.
   // Kalau dipasang setelah await (mis. setelah loadAudioMeta), dua panggilan
   // regenerate-transcript beruntun (klik ganda dari panel) sama-sama lolos
@@ -138,10 +137,12 @@ async function regenerateTranscript(meetingId) {
   updateBadge();
   broadcastRec();
   try {
-    // rec kosong setelah SW restart, tapi offscreen selamat: tanpa cek ini,
-    // regenerate di tengah rekaman memakai offscreen yang sedang merekam dan
-    // closeDocument() di akhir transkrip membuang chunk rekaman yang berjalan.
-    if (await hasOffscreen()) throw new Error('Rekaman/transkrip masih berjalan.');
+    // Tidak ada cek hasOffscreen() di sini: dokumen offscreen ditutup secara
+    // fire-and-forget setelah transkrip selesai, jadi klik di sela penutupan itu
+    // akan salah ditolak — dan kalau closeDocument gagal (rejection-nya ditelan),
+    // transkrip ulang terblokir selamanya. Penjaganya ada di offscreen sendiri
+    // (busy || recorder), yang justru selamat dari restart SW dan membalas
+    // {ok:false}; balasan itu diperiksa di bawah.
     const meta = await globalThis.MeetAudioStore.loadAudioMeta();
     if (!meta) throw new Error('Tidak ada audio tersimpan.');
     if (meta.meetingId !== meetingId) {

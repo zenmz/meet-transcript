@@ -34,6 +34,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   } else if (msg.type === 'rec-state') {
     recState = { recording: msg.recording, transcribing: msg.transcribing,
       done: msg.done ?? 0, total: msg.total ?? 0, error: msg.error ?? null };
+    audioMetaKey = null; // audio tersimpan hanya berubah lewat siklus rekam/transkrip
     if (tab === 'live') render();
   }
 });
@@ -62,6 +63,8 @@ function download(name, text) {
 // pass yang kalah cepat tidak boleh menimpa DOM pass yang lebih baru.
 let renderEpoch = 0;
 let lastRenderedKey = null; // view terakhir yang digambar renderMeeting (id|live)
+let audioMeta = null;       // hasil audio-meta terakhir
+let audioMetaKey = null;    // view key yang menghasilkannya (null = wajib tanya lagi)
 const momErrors = new Map(); // meetingId → pesan error MoM terakhir
 
 async function render() {
@@ -73,16 +76,23 @@ async function render() {
 
 async function renderMeeting(id, live, epoch) {
   const meeting = id ? await getMeeting(id) : null;
+  const viewKey = `${id}|${live}`;
   // Hanya rekaman TERAKHIR yang disimpan — tombol "Transkrip ulang" muncul
   // kalau audio tersimpan memang milik meeting ini. Diambil DI SINI, sebelum
   // replaceChildren: kalau await-nya setelah DOM dikosongkan, broadcast status
   // tiap 2 detik membuat action bar + seluruh daftar segmen berkedip.
-  const audioMeta = meeting?.source === 'audio'
-    ? await chrome.runtime.sendMessage({ type: 'audio-meta' }).catch(() => null)
-    : null;
+  // Tidak ditanya ulang untuk view yang sama: tiap panggilan audio-meta = satu
+  // indexedDB.open + transaksi di SW, sedangkan broadcast status merender ulang
+  // view ini tiap 2 detik tanpa henti. Isinya cuma berubah lewat siklus
+  // rekam/transkrip, dan cache dibuang di listener rec-state.
+  if (meeting?.source !== 'audio') { audioMeta = null; audioMetaKey = viewKey; }
+  else if (audioMetaKey !== viewKey) {
+    audioMeta = await chrome.runtime.sendMessage({ type: 'audio-meta' }).catch(() => null);
+    audioMetaKey = viewKey;
+  }
   if (epoch !== renderEpoch) return; // pass lebih baru sudah jalan
-  const sameView = `${id}|${live}` === lastRenderedKey;
-  lastRenderedKey = `${id}|${live}`;
+  const sameView = viewKey === lastRenderedKey;
+  lastRenderedKey = viewKey;
   // Navigasi ke view lain: mulai dari bawah (live) / atas (riwayat).
   // Rerender view yang sama: pertahankan posisi baca.
   const stickToBottom = live && (!sameView || view.scrollHeight - view.scrollTop - view.clientHeight < 40);
@@ -132,6 +142,12 @@ async function renderMeeting(id, live, epoch) {
   view.append(el('p', 'muted', new Date(meeting.startedAt).toLocaleString()));
 
   if (momErrors.has(meeting.id)) view.append(el('div', 'error', momErrors.get(meeting.id)));
+
+  // Error rekam/transkrip di atas hanya dicat di bar tab Live. Kalau meeting
+  // rekamannya bukan meeting aktif, pesan "Transkrip kosong… coba Transkrip
+  // ulang" muncul di Live tanpa tombolnya, sedangkan tombolnya (di Riwayat)
+  // muncul tanpa pesannya — dicat di sini supaya keduanya ketemu.
+  if (!live && recState.error) view.append(el('div', 'err', recState.error));
 
   const actions = el('div', 'actions');
   const btn = (label, fn) => {
