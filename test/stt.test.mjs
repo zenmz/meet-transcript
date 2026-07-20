@@ -42,3 +42,27 @@ test('mergeSttChunks chunk error → penanda, segmen kosong dilewati', () => {
     { t: 601000, speaker: '', text: 'ok' },
   ]);
 });
+
+test('sttEndpoint: STT fields kosong → ikut endpoint utama', () => {
+  assert.deepEqual(
+    globalThis.MeetStt.sttEndpoint({ baseUrl: 'https://x/v1', apiKey: 'k' }),
+    { baseUrl: 'https://x/v1', apiKey: 'k' });
+});
+
+test('sttEndpoint: sttBaseUrl terisi → apiKey utama TIDAK ikut', () => {
+  assert.deepEqual(
+    globalThis.MeetStt.sttEndpoint({ baseUrl: 'https://x/v1', apiKey: 'k', sttBaseUrl: 'http://localhost:8080/v1' }),
+    { baseUrl: 'http://localhost:8080/v1', apiKey: '' });
+});
+
+test('sttEndpoint: sttBaseUrl + sttApiKey terisi → dua-duanya dipakai', () => {
+  assert.deepEqual(
+    globalThis.MeetStt.sttEndpoint({ baseUrl: 'https://x/v1', apiKey: 'k', sttBaseUrl: 'http://localhost:20128/v1', sttApiKey: 's' }),
+    { baseUrl: 'http://localhost:20128/v1', apiKey: 's' });
+});
+
+test('sttEndpoint: hanya sttApiKey terisi → baseUrl utama + sttApiKey', () => {
+  assert.deepEqual(
+    globalThis.MeetStt.sttEndpoint({ baseUrl: 'https://x/v1', apiKey: 'k', sttApiKey: 's' }),
+    { baseUrl: 'https://x/v1', apiKey: 's' });
+});

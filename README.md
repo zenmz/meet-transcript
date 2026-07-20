@@ -35,6 +35,23 @@ transkrip via STT.
 Catatan: transkrip baru muncul setelah Stop (bukan live). Hanya audio tab
 (peserta) yang direkam, mic sendiri tidak.
 
+**STT Base URL terpisah**: di Settings, field **STT Base URL** kosong = ikut
+Base URL (OpenAI-compatible) di atas. Isi kalau STT dan chat butuh endpoint
+beda, mis. whisper lokal (`http://localhost:8080/v1`) atau proxy semacam
+9Router. Field **STT API key** di sampingnya: kosong = tanpa auth (whisper
+lokal); isi untuk 9Router atau proxy lain yang butuh otentikasi.
+
+## Tanpa API key: copy prompt atau kirim ke Gemini
+
+Alternatif kalau tak mau isi API key OpenAI, dari tab Riwayat/Live:
+
+- **Copy Prompt+Transkrip**: salin prompt MoM lengkap (template + transkrip)
+  ke clipboard — paste ke ChatGPT/Gemini/AI web lain manual.
+- **Kirim ke Gemini**: buka tab gemini.google.com, isi kotak chat dengan
+  prompt, lalu kirim otomatis (butuh sudah login Google). Prompt tetap
+  disalin ke clipboard duluan sebagai fallback — kalau auto-isi gagal (mis.
+  DOM Gemini berubah), tinggal paste manual di kotak chat yang sudah terbuka.
+
 ## Batasan v1
 
 - Transkrip bersumber dari caption Meet — caption harus nyala, akurasi ikut Google.
