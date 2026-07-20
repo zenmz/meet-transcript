@@ -38,7 +38,8 @@ Catatan: transkrip baru muncul setelah Stop (bukan live). Hanya audio tab
 **STT Base URL terpisah**: di Settings, field **STT Base URL** kosong = ikut
 Base URL (OpenAI-compatible) di atas. Isi kalau STT dan chat butuh endpoint
 beda, mis. whisper lokal (`http://localhost:8080/v1`) atau proxy semacam
-9Router.
+9Router. Field **STT API key** di sampingnya: kosong = tanpa auth (whisper
+lokal); isi untuk 9Router atau proxy lain yang butuh otentikasi.
 
 ## Tanpa API key: copy prompt atau kirim ke Gemini
 

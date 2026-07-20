@@ -271,14 +271,22 @@ function injectGeminiPrompt(text) {
 
 function sendToGemini(text) {
   chrome.tabs.create({ url: 'https://gemini.google.com/app' }).then((tab) => {
-    const onUpdated = (id, info) => {
+    const onUpdated = (id, info, t) => {
       if (id !== tab.id || info.status !== 'complete') return;
+      // Belum sign-in → redirect ke accounts.google.com juga 'complete': tunggu Gemini asli.
+      if (!t.url?.startsWith('https://gemini.google.com/')) return;
       chrome.tabs.onUpdated.removeListener(onUpdated);
       // Gagal inject (SW restart, DOM berubah) → diam: teks sudah di clipboard.
       chrome.scripting.executeScript({ target: { tabId: tab.id }, func: injectGeminiPrompt, args: [text] })
         .catch(() => {});
     };
     chrome.tabs.onUpdated.addListener(onUpdated);
+    // Tab ditutup sebelum Gemini sempat load → lepas listener, jangan tinggalkan closure mati.
+    chrome.tabs.onRemoved.addListener(function gone(id) {
+      if (id !== tab.id) return;
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      chrome.tabs.onRemoved.removeListener(gone);
+    });
   });
 }
 
