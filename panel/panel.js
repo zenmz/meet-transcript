@@ -94,11 +94,14 @@ async function renderMeeting(id, live, epoch) {
   // tombolnya hilang. Nol = fetch lagi saat view audio dirender.
   if (meeting?.source !== 'audio') { audioMeta = null; audioMetaKey = null; }
   else if (audioMetaKey !== viewKey) {
-    audioMeta = await chrome.runtime.sendMessage({ type: 'audio-meta' }).catch(() => null);
-    // Hanya hasil positif yang di-cache: kalau round-trip gagal sesaat (SW
-    // sedang teardown), meng-cache null-nya menyembunyikan tombol sampai
-    // rec-state berikutnya walau audionya ada.
-    if (audioMeta) audioMetaKey = viewKey;
+    // undefined = round-trip GAGAL (SW teardown), null = SW menjawab "tak ada
+    // audio". Yang gagal tidak di-cache (kalau di-cache, tombol tersembunyi
+    // sampai rec-state berikutnya walau audionya ada); yang menjawab null
+    // di-cache (kalau tidak, render tiap 2 detik memanggil audio-meta terus
+    // — persis beban yang cache ini ada untuk mencegah).
+    const res = await chrome.runtime.sendMessage({ type: 'audio-meta' }).catch(() => undefined);
+    audioMeta = res ?? null;
+    if (res !== undefined) audioMetaKey = viewKey;
   }
   if (epoch !== renderEpoch) return; // pass lebih baru sudah jalan
   const sameView = viewKey === lastRenderedKey;
