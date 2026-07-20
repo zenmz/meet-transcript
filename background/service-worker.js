@@ -76,7 +76,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     }
     const meetingId = meetingIdFromUrl(tab?.url) || active.id;
     if (!meetingId) { broadcastRec({ error: 'Bukan halaman meeting aktif.' }); return; }
-    recTitle = tab?.title?.replace(/\s*[-—]\s*Google Meet\s*$/, '').trim() || null;
+    recTitle = tab?.title?.replace(/\s*[-—–]\s*Google Meet\s*$/, '').trim() || null;
     try {
       const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
       await startRecording({ streamId, meetingId });
@@ -129,7 +129,10 @@ async function regenerateTranscript(meetingId) {
     const { settings = {} } = await chrome.storage.local.get('settings');
     const stt = globalThis.MeetStt.sttEndpoint(settings);
     await ensureOffscreen();
-    chrome.runtime.sendMessage({
+    // await: kalau tak ada receiving end (offscreen sempat tertutup di antara
+    // ensureOffscreen dan send), promise reject dan harus lewat catch di
+    // bawah — kalau tidak, rec.transcribing macet true selamanya.
+    await chrome.runtime.sendMessage({
       target: 'offscreen', op: 'retranscribe', meetingId,
       baseUrl: stt.baseUrl, apiKey: stt.apiKey,
       sttModel: settings.sttModel || 'nvidia/parakeet-ctc-1.1b-asr',
@@ -343,15 +346,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       (e) => sendResponse({ ok: false, error: e.message })
     );
     return true; // sendResponse async
-  }
-  if (msg.type === 'start-recording') {
-    startRecording(msg).catch((e) => {
-      // Gagal setelah rec di-set → reset state + badge, jangan tinggalkan stuck.
-      rec = { recording: false, transcribing: false, meetingId: null };
-      updateBadge();
-      broadcastRec({ error: e.message });
-    });
-    return false;
   }
   if (msg.type === 'stop-recording') {
     stopRecording();
