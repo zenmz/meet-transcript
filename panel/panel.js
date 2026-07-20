@@ -158,6 +158,11 @@ async function renderMeeting(id, live, epoch) {
       // Clipboard dulu: asuransi kalau injeksi gagal (DOM Gemini berubah).
       await navigator.clipboard.writeText(prompt).catch(() => {});
       chrome.runtime.sendMessage({ type: 'send-to-gemini', text: prompt });
+      // Tab Live rerender ~2 detik sekali lewat broadcast status (tombol ini
+      // ikut dibuat ulang, otomatis enable) — tab Riwayat tidak rerender
+      // sendiri, jadi tanpa ini tombol tetap disabled selamanya kalau injeksi
+      // gagal dan user harus pindah tab lalu balik untuk coba lagi.
+      setTimeout(() => { gemBtn.disabled = false; gemBtn.textContent = 'Kirim ke Gemini'; }, 3000);
     });
   }
   btn('Unduh .txt', () => download(`${meeting.title}.txt`, M.formatTranscript(meeting.segments)));
@@ -254,31 +259,17 @@ async function renderSettings(epoch) {
 
   const normalizedBase = () => (baseUrl.value.trim() || DEFAULT_BASE).replace(/\/+$/, '');
 
-  // Host selain default butuh izin runtime (manifest hanya mengizinkan
-  // api.openai.com). Diminta di sini karena perlu user gesture.
-  async function ensureOrigin(base) {
-    let u;
-    try {
-      u = new URL(base);
-    } catch {
-      throw new Error('Base URL tidak valid.');
-    }
-    // Match pattern Chrome tidak boleh berisi port — pakai hostname saja
-    // (pattern tanpa port otomatis mencakup semua port, mis. localhost:20128).
-    const pattern = `${u.protocol}//${u.hostname}/*`;
-    if (pattern === 'https://api.openai.com/*') return;
-    const ok = await chrome.permissions.request({ origins: [pattern] }).catch(() => false);
-    if (!ok) throw new Error(`Izin akses ${u.hostname} ditolak.`);
-  }
-
-  // Simpan minta izin chat + STT sekaligus: dua request permintaan berurutan
-  // di satu klik kehilangan user activation di antara dialog (throw "must be
+  // Minta izin chat + STT sekaligus: dua request permintaan berurutan di
+  // satu klik kehilangan user activation di antara dialog (throw "must be
   // called during a user gesture") — satu dialog gabungan menghindari itu.
+  // Dipakai baik oleh Simpan maupun Tes koneksi.
   async function ensureOrigins(bases) {
     const patterns = [];
     for (const b of bases) {
       let u;
-      try { u = new URL(b); } catch { throw new Error('Base URL tidak valid.'); }
+      try { u = new URL(b); } catch { throw new Error(`URL tidak valid: ${b}`); }
+      // Match pattern Chrome tidak boleh berisi port — pakai hostname saja
+      // (pattern tanpa port otomatis mencakup semua port, mis. localhost:20128).
       const p = `${u.protocol}//${u.hostname}/*`;
       if (p !== 'https://api.openai.com/*') patterns.push(p);
     }
@@ -289,8 +280,8 @@ async function renderSettings(epoch) {
   }
 
   // GET /models saja: cukup deteksi typo URL / API key kosong-salah tanpa
-  // butuh file audio sungguhan. 404 tetap dianggap OK (warning) — sebagian
-  // server tidak menyediakan /models sama sekali.
+  // butuh file audio sungguhan. 404/405/501 tetap dianggap OK (warning) —
+  // sebagian server tidak menyediakan /models sama sekali.
   async function probeStt(base, key) {
     const host = new URL(base).hostname;
     let res;
@@ -302,8 +293,10 @@ async function renderSettings(epoch) {
     if (res.status === 401 || res.status === 403) {
       throw new Error(`STT ${host}: HTTP ${res.status} (STT API key salah/kosong?)`);
     }
-    if (res.status === 404) {
-      return ` (STT ${host}: endpoint /models 404 — mungkin tak didukung server, cek manual.)`;
+    if (res.status === 404 || res.status === 405 || res.status === 501) {
+      // Sebagian server whisper tidak melayani GET /models sama sekali —
+      // 405/501 sama artinya dengan 404 di sini, bukan kegagalan.
+      return ` (STT ${host}: endpoint /models tak didukung server — HTTP ${res.status}, cek manual.)`;
     }
     if (!res.ok) throw new Error(`STT ${host}: HTTP ${res.status}`);
     return '';
@@ -315,18 +308,18 @@ async function renderSettings(epoch) {
     setNote('muted', 'Menguji…');
     try {
       const base = normalizedBase();
-      await ensureOrigin(base);
+      const sttBase = sttBaseUrl.value.trim().replace(/\/+$/, '');
+      // Kedua origin diminta sekaligus di sini, sebelum testConnection (yang
+      // bisa >5 detik) — request izin kedua setelah round-trip jaringan sudah
+      // lewat batas user activation dan gagal ("must be called during a user
+      // gesture"), yang salah dilaporkan sebagai izin ditolak.
+      await ensureOrigins(sttBase ? [base, sttBase] : [base]);
       await globalThis.MeetOpenAI.testConnection({
         apiKey: apiKey.value.trim(),
         model: model.value.trim() || 'gpt-4o-mini',
         baseUrl: base,
       });
-      const sttBase = sttBaseUrl.value.trim().replace(/\/+$/, '');
-      let sttNote = '';
-      if (sttBase) {
-        await ensureOrigin(sttBase);
-        sttNote = await probeStt(sttBase, sttApiKey.value.trim());
-      }
+      const sttNote = sttBase ? await probeStt(sttBase, sttApiKey.value.trim()) : '';
       setNote('ok', `✓ Koneksi OK${sttBase ? ' (chat + STT)' : ''} — URL, API key, dan model valid.${sttNote}`);
     } catch (e) {
       setNote('err', '✗ Gagal: ' + e.message);
@@ -342,7 +335,7 @@ async function renderSettings(epoch) {
     try {
       await ensureOrigins(sttBase ? [base, sttBase] : [base]);
     } catch (e) {
-      if (e.message === 'Base URL tidak valid.') return setNote('err', e.message);
+      if (e.message.startsWith('URL tidak valid:')) return setNote('err', e.message);
       warning = e.message; // izin ditolak → tetap simpan, tapi beri tahu
     }
     await chrome.storage.local.set({
