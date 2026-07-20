@@ -85,7 +85,10 @@ async function renderMeeting(id, live, epoch) {
   // indexedDB.open + transaksi di SW, sedangkan broadcast status merender ulang
   // view ini tiap 2 detik tanpa henti. Isinya cuma berubah lewat siklus
   // rekam/transkrip, dan cache dibuang di listener rec-state.
-  if (meeting?.source !== 'audio') { audioMeta = null; audioMetaKey = viewKey; }
+  // Hasil negatif TIDAK di-cache: rekaman pertama menyiarkan rec-state sebelum
+  // record meeting-nya tersimpan, jadi render saat itu melihat meeting null —
+  // meng-cache-nya membuat tombol tak pernah muncul di tab Live sesi itu.
+  if (meeting?.source !== 'audio') audioMeta = null;
   else if (audioMetaKey !== viewKey) {
     audioMeta = await chrome.runtime.sendMessage({ type: 'audio-meta' }).catch(() => null);
     audioMetaKey = viewKey;
@@ -147,7 +150,12 @@ async function renderMeeting(id, live, epoch) {
   // rekamannya bukan meeting aktif, pesan "Transkrip kosong… coba Transkrip
   // ulang" muncul di Live tanpa tombolnya, sedangkan tombolnya (di Riwayat)
   // muncul tanpa pesannya — dicat di sini supaya keduanya ketemu.
-  if (!live && recState.error) view.append(el('div', 'err', recState.error));
+  // Digate ke meeting pemilik audio: recState.error satu slot global, tanpa
+  // gate ini error rekaman meeting A ikut tercat di meeting caption lama B
+  // yang tak punya tombolnya — persis kebingungan yang mau dihilangkan.
+  if (!live && recState.error && audioMeta?.meetingId === meeting.id) {
+    view.append(el('div', 'err', recState.error));
+  }
 
   const actions = el('div', 'actions');
   const btn = (label, fn) => {

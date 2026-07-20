@@ -76,14 +76,18 @@ async function stopAndTranscribe() {
     // kalau tab dibongkar di saat yang salah, event 'stop' bisa tak pernah
     // datang — promise menggantung, finally tak jalan, dan busy macet true:
     // stop & transkrip ulang ditolak selamanya sampai browser di-restart.
-    await Promise.race([
+    const finalized = await Promise.race([
       new Promise((resolve) => {
-        if (!recorder || recorder.state === 'inactive') return resolve();
-        recorder.addEventListener('stop', resolve, { once: true });
+        if (!recorder || recorder.state === 'inactive') return resolve(true);
+        recorder.addEventListener('stop', () => resolve(true), { once: true });
         recorder.stop();
       }),
-      new Promise((resolve) => setTimeout(resolve, 5000)), // 5s cukup untuk finalisasi satu chunk
+      new Promise((resolve) => setTimeout(() => resolve(false), 5000)), // 5s cukup untuk finalisasi satu chunk
     ]);
+    // Timeout: chunk terakhir (sampai chunkMs = 10 menit audio) tidak masuk
+    // chunkBlobs. Jangan diam — user harus tahu ujung rekaman hilang.
+    if (!finalized) toSW({ type: 'audio-warn', meetingId: cfg.meetingId,
+      error: 'Potongan terakhir gagal difinalisasi — bagian akhir rekaman mungkin hilang.' });
     stream?.getTracks().forEach((t) => t.stop());
     await audioCtx?.close().catch(() => {});
     audioCtx = null; stream = null; recorder = null;
