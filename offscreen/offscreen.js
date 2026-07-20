@@ -43,6 +43,24 @@ async function start(msg) {
   rotateTimer = setInterval(rotateChunk, msg.chunkMs);
 }
 
+// Dipakai dua jalur: setelah rekam selesai, dan tombol "Transkrip ulang".
+async function transcribeChunks(blobs, c) {
+  const results = [];
+  for (let i = 0; i < blobs.length; i++) {
+    toSW({ type: 'audio-progress', meetingId: c.meetingId, done: i, total: blobs.length });
+    try {
+      results.push(await globalThis.MeetOpenAI.transcribeAudio({
+        blob: blobs[i], baseUrl: c.baseUrl, apiKey: c.apiKey,
+        model: c.sttModel, language: c.sttLanguage,
+      }));
+    } catch (e) {
+      results.push({ error: e.message });
+    }
+  }
+  const segments = globalThis.MeetStt.mergeSttChunks(results, c.chunkMs, c.baseTime);
+  toSW({ type: 'audio-transcript', meetingId: c.meetingId, segments, baseTime: c.baseTime });
+}
+
 async function stopAndTranscribe() {
   clearInterval(rotateTimer);
   rotateTimer = null;
@@ -56,21 +74,26 @@ async function stopAndTranscribe() {
   await audioCtx?.close().catch(() => {});
   audioCtx = null; stream = null; recorder = null;
 
-  const results = [];
-  for (let i = 0; i < chunkBlobs.length; i++) {
-    toSW({ type: 'audio-progress', meetingId: cfg.meetingId, done: i, total: chunkBlobs.length });
-    try {
-      results.push(await globalThis.MeetOpenAI.transcribeAudio({
-        blob: chunkBlobs[i], baseUrl: cfg.baseUrl, apiKey: cfg.apiKey,
-        model: cfg.sttModel, language: cfg.sttLanguage,
-      }));
-    } catch (e) {
-      results.push({ error: e.message });
-    }
-  }
-  const segments = globalThis.MeetStt.mergeSttChunks(results, cfg.chunkMs, cfg.baseTime);
+  // Simpan dulu, transkrip belakangan: endpoint STT salah tidak boleh
+  // menghanguskan rekaman — audio tetap bisa ditranskrip ulang.
+  await globalThis.MeetAudioStore.saveAudio({
+    meetingId: cfg.meetingId, chunkMs: cfg.chunkMs, baseTime: cfg.baseTime, blobs: chunkBlobs,
+  }).catch((e) => toSW({ type: 'audio-warn', meetingId: cfg.meetingId,
+    error: 'Audio gagal disimpan untuk transkrip ulang: ' + e.message }));
+  const blobs = chunkBlobs;
   chunkBlobs = [];
-  toSW({ type: 'audio-transcript', meetingId: cfg.meetingId, segments });
+  await transcribeChunks(blobs, cfg);
+}
+
+async function retranscribe(msg) {
+  const saved = await globalThis.MeetAudioStore.loadAudio();
+  if (!saved) throw new Error('Audio rekaman tidak tersimpan lagi.');
+  if (saved.meetingId !== msg.meetingId) {
+    throw new Error('Audio tersimpan milik meeting lain — hanya rekaman terakhir yang disimpan.');
+  }
+  // chunkMs/baseTime dari rekaman asli supaya timestamp segmen tetap sama;
+  // endpoint & model diambil dari settings TERBARU lewat msg.
+  await transcribeChunks(saved.blobs, { ...msg, chunkMs: saved.chunkMs, baseTime: saved.baseTime });
 }
 
 chrome.runtime.onMessage.addListener((msg) => {
@@ -79,5 +102,8 @@ chrome.runtime.onMessage.addListener((msg) => {
     start(msg).catch((e) => toSW({ type: 'audio-error', meetingId: msg.meetingId, error: e.message }));
   } else if (msg.op === 'stop') {
     stopAndTranscribe().catch((e) => toSW({ type: 'audio-error', meetingId: cfg?.meetingId, error: e.message }));
+  } else if (msg.op === 'retranscribe') {
+    retranscribe(msg).catch((e) =>
+      toSW({ type: 'audio-error', meetingId: msg.meetingId, error: e.message }));
   }
 });
