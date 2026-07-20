@@ -16,7 +16,7 @@
 - Semua teks UI bahasa Indonesia, konsisten dengan yang ada.
 - Panel render pakai `el()`/`textContent` — jangan pernah `innerHTML` dengan data meeting.
 - Komentar kode bahasa Indonesia, gaya repo (jelaskan constraint, bukan apa yang baris lakukan).
-- Test: `node --test test/` harus hijau di tiap commit.
+- Test: `node --test test/*.test.mjs` harus hijau di tiap commit (perintah dari README — `node --test test/` gagal di Node 22).
 - Kerja di branch `feat/stt-endpoint-gemini` dari `main`.
 
 ---
