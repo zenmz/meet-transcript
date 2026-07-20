@@ -44,6 +44,11 @@ async function getMeeting(id) {
 
 const safeName = (s) => s.replace(/[\/\\:*?"<>|]/g, '-');
 
+// Prompt MoM lengkap (template + transkrip) untuk paste ke AI web tanpa API key.
+const promptText = (meeting) => M.fillTemplate(
+  settingsCache.momTemplate ?? M.DEFAULT_MOM_TEMPLATE,
+  M.formatTranscript(meeting.segments));
+
 function download(name, text) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
@@ -133,6 +138,14 @@ async function renderMeeting(id, live, epoch) {
       copyBtn.textContent = 'Disalin ✓';
     } catch {
       copyBtn.textContent = 'Gagal menyalin';
+    }
+  });
+  const copyPromptBtn = btn('Copy Prompt+Transkrip', async () => {
+    try {
+      await navigator.clipboard.writeText(promptText(meeting));
+      copyPromptBtn.textContent = 'Disalin ✓';
+    } catch {
+      copyPromptBtn.textContent = 'Gagal menyalin';
     }
   });
   btn('Unduh .txt', () => download(`${meeting.title}.txt`, M.formatTranscript(meeting.segments)));
