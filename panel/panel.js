@@ -148,6 +148,12 @@ async function renderMeeting(id, live, epoch) {
       copyPromptBtn.textContent = 'Gagal menyalin';
     }
   });
+  const gemBtn = btn('Kirim ke Gemini', async () => {
+    // Clipboard dulu: asuransi kalau injeksi gagal (DOM Gemini berubah).
+    await navigator.clipboard.writeText(promptText(meeting)).catch(() => {});
+    chrome.runtime.sendMessage({ type: 'send-to-gemini', text: promptText(meeting) });
+    gemBtn.textContent = 'Membuka Gemini…';
+  });
   btn('Unduh .txt', () => download(`${meeting.title}.txt`, M.formatTranscript(meeting.segments)));
   btn('Unduh .md', () => download(`${meeting.title}.md`, M.formatMarkdown(meeting)));
   const momBtn = btn(meeting.mom ? 'Regenerate MoM' : 'Generate MoM', async () => {

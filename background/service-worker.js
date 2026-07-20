@@ -239,6 +239,49 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 });
 
+// Berjalan DI HALAMAN Gemini via executeScript — harus mandiri (di-serialize,
+// tak bisa akses scope SW). Poll: Gemini SPA, editor muncul belakangan.
+// Selector dipusatkan di SEL — titik perbaikan kalau DOM Gemini berubah.
+function injectGeminiPrompt(text) {
+  const SEL = {
+    editor: 'div.ql-editor',
+    send: 'button[aria-label*="Send" i], button[aria-label*="Kirim" i], button.send-button',
+  };
+  const deadline = Date.now() + 20000;
+  const timer = setInterval(() => {
+    const editor = document.querySelector(SEL.editor);
+    if (!editor) {
+      if (Date.now() > deadline) clearInterval(timer); // timeout → user paste manual (clipboard)
+      return;
+    }
+    clearInterval(timer);
+    editor.focus();
+    editor.replaceChildren();
+    // Quill: satu <p> per baris; InputEvent supaya framework Gemini deteksi isi.
+    for (const line of text.split('\n')) {
+      const p = document.createElement('p');
+      p.textContent = line;
+      editor.append(p);
+    }
+    editor.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    // Tombol kirim baru enable setelah framework proses input event.
+    setTimeout(() => document.querySelector(SEL.send)?.click(), 500);
+  }, 500);
+}
+
+function sendToGemini(text) {
+  chrome.tabs.create({ url: 'https://gemini.google.com/app' }).then((tab) => {
+    const onUpdated = (id, info) => {
+      if (id !== tab.id || info.status !== 'complete') return;
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      // Gagal inject (SW restart, DOM berubah) → diam: teks sudah di clipboard.
+      chrome.scripting.executeScript({ target: { tabId: tab.id }, func: injectGeminiPrompt, args: [text] })
+        .catch(() => {});
+    };
+    chrome.tabs.onUpdated.addListener(onUpdated);
+  });
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'get-active') {
     sendResponse({ ...active, rec });
@@ -281,6 +324,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     updateBadge();
     broadcastRec({ error: msg.error });
     chrome.offscreen.closeDocument?.().catch(() => {});
+    return false;
+  }
+  if (msg.type === 'send-to-gemini') {
+    sendToGemini(msg.text);
     return false;
   }
   return false;
