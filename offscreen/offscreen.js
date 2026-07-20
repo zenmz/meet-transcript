@@ -15,7 +15,9 @@ let busy = false;
 const MIME = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
   ? 'audio/webm;codecs=opus' : 'audio/webm';
 
-function toSW(msg) { chrome.runtime.sendMessage(msg); }
+// catch: SW sedang teardown & panel tertutup → tak ada penerima, dan rejection
+// tanpa handler jadi unhandled rejection di offscreen document.
+function toSW(msg) { chrome.runtime.sendMessage(msg).catch(() => {}); }
 
 function startChunkRecorder() {
   const data = []; // per-recorder: rotasi tak boleh menabrak data recorder lain
@@ -86,7 +88,7 @@ async function stopAndTranscribe() {
     ]);
     // Timeout: chunk terakhir (sampai chunkMs = 10 menit audio) tidak masuk
     // chunkBlobs. Jangan diam — user harus tahu ujung rekaman hilang.
-    if (!finalized) toSW({ type: 'audio-warn', meetingId: cfg.meetingId,
+    if (!finalized) toSW({ type: 'audio-warn', meetingId: cfg?.meetingId,
       error: 'Potongan terakhir gagal difinalisasi — bagian akhir rekaman mungkin hilang.' });
     stream?.getTracks().forEach((t) => t.stop());
     await audioCtx?.close().catch(() => {});

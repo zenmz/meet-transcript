@@ -88,7 +88,11 @@ async function renderMeeting(id, live, epoch) {
   // Hasil negatif TIDAK di-cache: rekaman pertama menyiarkan rec-state sebelum
   // record meeting-nya tersimpan, jadi render saat itu melihat meeting null —
   // meng-cache-nya membuat tombol tak pernah muncul di tab Live sesi itu.
-  if (meeting?.source !== 'audio') audioMeta = null;
+  // Key ikut dinolkan, bukan diisi viewKey: mengisinya meng-cache hasil
+  // negatif (tombol tak pernah muncul), membiarkannya membuat key menunjuk
+  // view yang nilainya sudah dibuang — balik ke view itu melewati fetch dan
+  // tombolnya hilang. Nol = fetch lagi saat view audio dirender.
+  if (meeting?.source !== 'audio') { audioMeta = null; audioMetaKey = null; }
   else if (audioMetaKey !== viewKey) {
     audioMeta = await chrome.runtime.sendMessage({ type: 'audio-meta' }).catch(() => null);
     audioMetaKey = viewKey;
