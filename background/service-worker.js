@@ -21,7 +21,23 @@ function updateBadge() {
 
 // Mode audio: state rekaman + lifecycle offscreen document.
 let rec = { recording: false, transcribing: false, meetingId: null };
-let recTitle = null; // judul tab saat mulai rekam — mode audio tak punya sumber judul lain
+
+// Judul tab saat mulai rekam — mode audio tak punya sumber judul lain. Disimpan
+// di storage.session, bukan variabel modul: jarak mulai→simpan bisa berjam-jam
+// dan SW MV3 pasti mati di antaranya (judul akan diam-diam jadi meeting id).
+const setRecTitle = (title) => chrome.storage.session.set({ recTitle: title });
+const getRecTitle = async () => (await chrome.storage.session.get('recTitle')).recTitle ?? null;
+
+// Judul tab Meet: Chrome menaruh "Meet" di DEPAN (`Meet – abc-defg-hij`), tapi
+// bentuk trailing " - Google Meet" juga muncul di sebagian versi/locale.
+// Sisa yang kosong atau cuma meeting id bukan judul yang berguna.
+function titleFromTab(tabTitle, meetingId) {
+  const t = String(tabTitle ?? '')
+    .replace(/^Meet\s*[-—–]\s*/, '')
+    .replace(/\s*[-—–]\s*Google Meet\s*$/, '')
+    .trim();
+  return !t || t === meetingId ? meetingId : t;
+}
 
 function broadcastRec(extra = {}) {
   notifyPanel({ type: 'rec-state', recording: rec.recording, transcribing: rec.transcribing, ...extra });
@@ -76,7 +92,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     }
     const meetingId = meetingIdFromUrl(tab?.url) || active.id;
     if (!meetingId) { broadcastRec({ error: 'Bukan halaman meeting aktif.' }); return; }
-    recTitle = tab?.title?.replace(/\s*[-—–]\s*Google Meet\s*$/, '').trim() || null;
+    await setRecTitle(titleFromTab(tab?.title, meetingId));
     try {
       const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
       await startRecording({ streamId, meetingId });
@@ -112,6 +128,7 @@ async function startRecording({ streamId, meetingId }) {
 // SW MV3 bisa dimatikan di tengah loop upload yang panjang).
 async function regenerateTranscript(meetingId) {
   if (rec.recording || rec.transcribing) throw new Error('Rekaman/transkrip masih berjalan.');
+  // Cek hasOffscreen() ada DI DALAM try di bawah supaya catch mengembalikan rec.
   // rec di-set SEBELUM await pertama: ini satu-satunya penyerialisasi transkrip.
   // Kalau dipasang setelah await (mis. setelah loadAudioMeta), dua panggilan
   // regenerate-transcript beruntun (klik ganda dari panel) sama-sama lolos
@@ -121,6 +138,10 @@ async function regenerateTranscript(meetingId) {
   updateBadge();
   broadcastRec();
   try {
+    // rec kosong setelah SW restart, tapi offscreen selamat: tanpa cek ini,
+    // regenerate di tengah rekaman memakai offscreen yang sedang merekam dan
+    // closeDocument() di akhir transkrip membuang chunk rekaman yang berjalan.
+    if (await hasOffscreen()) throw new Error('Rekaman/transkrip masih berjalan.');
     const meta = await globalThis.MeetAudioStore.loadAudioMeta();
     if (!meta) throw new Error('Tidak ada audio tersimpan.');
     if (meta.meetingId !== meetingId) {
@@ -129,15 +150,17 @@ async function regenerateTranscript(meetingId) {
     const { settings = {} } = await chrome.storage.local.get('settings');
     const stt = globalThis.MeetStt.sttEndpoint(settings);
     await ensureOffscreen();
-    // await: kalau tak ada receiving end (offscreen sempat tertutup di antara
-    // ensureOffscreen dan send), promise reject dan harus lewat catch di
-    // bawah — kalau tidak, rec.transcribing macet true selamanya.
-    await chrome.runtime.sendMessage({
+    // Balasan diperiksa, bukan cuma "tidak reject": side panel yang terbuka
+    // juga sebuah receiving end, jadi sendMessage tetap resolve walau offscreen
+    // sudah tertutup — dan rec.transcribing macet true tanpa ada yang bekerja.
+    // Panel tidak pernah membalas pesan ini, jadi balasan offscreen yang menang.
+    const res = await chrome.runtime.sendMessage({
       target: 'offscreen', op: 'retranscribe', meetingId,
       baseUrl: stt.baseUrl, apiKey: stt.apiKey,
       sttModel: settings.sttModel || 'nvidia/parakeet-ctc-1.1b-asr',
       sttLanguage: settings.sttLanguage || '',
     });
+    if (!res?.ok) throw new Error(res?.error || 'Offscreen tidak merespons — transkrip ulang tidak dimulai.');
   } catch (e) {
     // Gagal sebelum offscreen mulai kerja → rec harus balik, jangan macet di
     // transcribing (memblok start/stop rekam & regenerate berikutnya selamanya).
@@ -164,12 +187,11 @@ async function saveAudioTranscript({ meetingId, segments, baseTime }) {
   const meeting = data[key] ?? {
     // startedAt = waktu MULAI rekam, bukan waktu simpan: kalau dipakai waktu
     // simpan, segmen ber-timestamp lebih awal dari "mulai" meeting-nya.
-    id: meetingId, title: recTitle || meetingId, startedAt: baseTime ?? Date.now(),
+    id: meetingId, title: (await getRecTitle()) || meetingId, startedAt: baseTime ?? Date.now(),
     endedAt: null, segments: [], mom: null,
   };
   meeting.source = 'audio';
-  for (const seg of segments) globalThis.MeetMerge.upsertSegment(meeting.segments,
-    { ...seg, id: `audio:${seg.t}:${meeting.segments.length}` });
+  meeting.segments = globalThis.MeetMerge.replaceAudioSegments(meeting.segments, segments);
   const meetings = data.meetings ?? [];
   if (!meetings.includes(meetingId)) meetings.unshift(meetingId);
   await chrome.storage.local.set({ [key]: meeting, meetings });
@@ -375,9 +397,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // meeting kosong yang tampak seperti berhasil.
       broadcastRec({ error: 'Transkrip kosong — STT tidak menghasilkan teks. Cek endpoint/model STT di Settings, lalu coba "Transkrip ulang".' });
     } else {
-      enqueueWrite(() => saveAudioTranscript(msg));
       broadcastRec();
     }
+    // Meeting TETAP disimpan walau kosong: tombol "Transkrip ulang" hanya ada
+    // di dalam view meeting tersimpan, jadi tanpa record ini pesan di atas
+    // menyuruh klik tombol yang tidak akan pernah muncul dan audio yang sudah
+    // tersimpan jadi tak terjangkau selamanya.
+    enqueueWrite(() => saveAudioTranscript(msg));
     chrome.offscreen.closeDocument?.().catch(() => {});
     return false;
   }

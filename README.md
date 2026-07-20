@@ -40,7 +40,9 @@ Catatan: transkrip baru muncul setelah Stop (bukan live). Hanya audio tab
 (peserta) yang direkam, mic sendiri tidak.
 
 **Transkrip ulang**: audio rekaman TERAKHIR disimpan (bukan di storage
-transkrip — terpisah, dan tertimpa begitu rekaman baru dimulai). Kalau
+transkrip — terpisah, dan tertimpa saat rekaman berikutnya di-*stop*, bukan
+saat dimulai — jadi audio lama masih bisa ditranskrip ulang selama rekaman
+baru belum selesai). Kalau
 endpoint/model STT di Settings salah, perbaiki lalu klik **Transkrip ulang**
 di meeting itu — tidak perlu merekam ulang. Karena hanya rekaman terakhir
 yang disimpan, tombol ini hanya muncul untuk meeting dari rekaman terakhir.

@@ -73,6 +73,13 @@ async function render() {
 
 async function renderMeeting(id, live, epoch) {
   const meeting = id ? await getMeeting(id) : null;
+  // Hanya rekaman TERAKHIR yang disimpan — tombol "Transkrip ulang" muncul
+  // kalau audio tersimpan memang milik meeting ini. Diambil DI SINI, sebelum
+  // replaceChildren: kalau await-nya setelah DOM dikosongkan, broadcast status
+  // tiap 2 detik membuat action bar + seluruh daftar segmen berkedip.
+  const audioMeta = meeting?.source === 'audio'
+    ? await chrome.runtime.sendMessage({ type: 'audio-meta' }).catch(() => null)
+    : null;
   if (epoch !== renderEpoch) return; // pass lebih baru sudah jalan
   const sameView = `${id}|${live}` === lastRenderedKey;
   lastRenderedKey = `${id}|${live}`;
@@ -125,13 +132,6 @@ async function renderMeeting(id, live, epoch) {
   view.append(el('p', 'muted', new Date(meeting.startedAt).toLocaleString()));
 
   if (momErrors.has(meeting.id)) view.append(el('div', 'error', momErrors.get(meeting.id)));
-
-  // Hanya rekaman TERAKHIR yang disimpan — tombol muncul kalau audio yang
-  // tersimpan memang milik meeting ini.
-  const audioMeta = meeting.source === 'audio'
-    ? await chrome.runtime.sendMessage({ type: 'audio-meta' }).catch(() => null)
-    : null;
-  if (epoch !== renderEpoch) return;
 
   const actions = el('div', 'actions');
   const btn = (label, fn) => {
