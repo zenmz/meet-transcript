@@ -30,10 +30,16 @@ transkrip via STT.
    Base URL & API key sama dengan MoM.
 2. Join Meet → tab Live → **Mulai rekam** (audio meeting tetap terdengar).
 3. **Stop rekam** → audio ditranskrip per potongan → transkrip muncul
-   (teks + waktu, tanpa nama pembicara). Audio tidak disimpan.
+   (teks + waktu, tanpa nama pembicara).
 
 Catatan: transkrip baru muncul setelah Stop (bukan live). Hanya audio tab
 (peserta) yang direkam, mic sendiri tidak.
+
+**Transkrip ulang**: audio rekaman TERAKHIR disimpan (bukan di storage
+transkrip — terpisah, dan tertimpa begitu rekaman baru dimulai). Kalau
+endpoint/model STT di Settings salah, perbaiki lalu klik **Transkrip ulang**
+di meeting itu — tidak perlu merekam ulang. Karena hanya rekaman terakhir
+yang disimpan, tombol ini hanya muncul untuk meeting dari rekaman terakhir.
 
 **STT Base URL terpisah**: di Settings, dropdown **Mode STT** memilih dari mana
 transkrip audio diambil:

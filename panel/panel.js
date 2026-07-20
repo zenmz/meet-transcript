@@ -125,6 +125,14 @@ async function renderMeeting(id, live, epoch) {
   view.append(el('p', 'muted', new Date(meeting.startedAt).toLocaleString()));
 
   if (momErrors.has(meeting.id)) view.append(el('div', 'error', momErrors.get(meeting.id)));
+
+  // Hanya rekaman TERAKHIR yang disimpan — tombol muncul kalau audio yang
+  // tersimpan memang milik meeting ini.
+  const audioMeta = meeting.source === 'audio'
+    ? await chrome.runtime.sendMessage({ type: 'audio-meta' }).catch(() => null)
+    : null;
+  if (epoch !== renderEpoch) return;
+
   const actions = el('div', 'actions');
   const btn = (label, fn) => {
     const b = el('button', null, label);
@@ -176,6 +184,20 @@ async function renderMeeting(id, live, epoch) {
     if (!res?.ok) momErrors.set(meeting.id, res?.error ?? 'Gagal menghubungi service worker.');
     render(); // state persisten + render(): epoch-safe, error tetap tampil setelah rerender
   });
+  if (audioMeta?.meetingId === meeting.id) {
+    const reBtn = btn('Transkrip ulang', async () => {
+      reBtn.disabled = true;
+      reBtn.textContent = 'Mentranskrip…';
+      momErrors.delete(meeting.id);
+      const res = await chrome.runtime.sendMessage(
+        { type: 'regenerate-transcript', id: meeting.id }).catch(() => null);
+      if (!res?.ok) {
+        momErrors.set(meeting.id, res?.error ?? 'Gagal menghubungi service worker.');
+        render();
+      }
+      // Sukses: hasil datang lewat broadcast meeting-updated, panel rerender sendiri.
+    });
+  }
   view.append(actions);
 
   const list = el('div');
