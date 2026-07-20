@@ -28,9 +28,13 @@ transkrip via STT.
 1. Settings → **Sumber transkrip** = **Rekam audio**. Isi **Model STT**
    (mis. `nvidia/parakeet-ctc-1.1b-asr`) dan **Bahasa STT** (mis. `id`).
    Base URL & API key sama dengan MoM.
-2. Join Meet → tab Live → **Mulai rekam** (audio meeting tetap terdengar).
-3. **Stop rekam** → audio ditranskrip per potongan → transkrip muncul
-   (teks + waktu, tanpa nama pembicara).
+2. Join Meet → **klik kanan di halaman Meet** → **Rekam audio meeting**
+   (audio meeting tetap terdengar). Mulai rekam TIDAK bisa dari tombol side
+   panel: `tabCapture` butuh invocation `activeTab` yang hanya diberikan klik
+   context menu, bukan klik di side panel.
+3. **Stop rekam** (dari panel, atau klik kanan → **Stop rekam audio**) → audio
+   ditranskrip per potongan → transkrip muncul (teks + waktu, tanpa nama
+   pembicara).
 
 Catatan: transkrip baru muncul setelah Stop (bukan live). Hanya audio tab
 (peserta) yang direkam, mic sendiri tidak.
