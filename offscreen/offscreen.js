@@ -70,6 +70,10 @@ async function transcribeChunks(blobs, c) {
 }
 
 async function stopAndTranscribe() {
+  // cfg null = dokumen ini belum pernah merekam (mis. baru dibuat untuk
+  // retranscribe, lalu kena 'stop' dari SW yang rec-nya ter-reset restart).
+  // Tanpa guard ini cfg.meetingId di bawah melempar TypeError.
+  if (!cfg) return;
   busy = true;
   try {
     clearInterval(rotateTimer);

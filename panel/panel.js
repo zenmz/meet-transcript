@@ -95,7 +95,10 @@ async function renderMeeting(id, live, epoch) {
   if (meeting?.source !== 'audio') { audioMeta = null; audioMetaKey = null; }
   else if (audioMetaKey !== viewKey) {
     audioMeta = await chrome.runtime.sendMessage({ type: 'audio-meta' }).catch(() => null);
-    audioMetaKey = viewKey;
+    // Hanya hasil positif yang di-cache: kalau round-trip gagal sesaat (SW
+    // sedang teardown), meng-cache null-nya menyembunyikan tombol sampai
+    // rec-state berikutnya walau audionya ada.
+    if (audioMeta) audioMetaKey = viewKey;
   }
   if (epoch !== renderEpoch) return; // pass lebih baru sudah jalan
   const sameView = viewKey === lastRenderedKey;
@@ -212,7 +215,10 @@ async function renderMeeting(id, live, epoch) {
     if (!res?.ok) momErrors.set(meeting.id, res?.error ?? 'Gagal menghubungi service worker.');
     render(); // state persisten + render(): epoch-safe, error tetap tampil setelah rerender
   });
-  if (audioMeta?.meetingId === meeting.id) {
+  // Disembunyikan saat rekam/transkrip jalan: audio tersimpan masih milik
+  // rekaman SEBELUMNYA, jadi menawarkannya di samping "Stop rekam" cuma
+  // membingungkan — SW menolak kliknya juga.
+  if (audioMeta?.meetingId === meeting.id && !recState.recording && !recState.transcribing) {
     const reBtn = btn('Transkrip ulang', async () => {
       reBtn.disabled = true;
       reBtn.textContent = 'Mentranskrip…';
