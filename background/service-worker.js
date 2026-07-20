@@ -1,5 +1,5 @@
 // background/service-worker.js
-importScripts('/lib/merge.js', '/lib/openai.js');
+importScripts('/lib/merge.js', '/lib/openai.js', '/lib/stt.js');
 
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 
@@ -93,13 +93,14 @@ async function startRecording({ streamId, meetingId }) {
     throw new Error('Rekaman masih berjalan.');
   }
   const { settings = {} } = await chrome.storage.local.get('settings');
+  const stt = globalThis.MeetStt.sttEndpoint(settings);
   await ensureOffscreen();
   rec = { recording: true, transcribing: false, meetingId };
   updateBadge();
   broadcastRec();
   chrome.runtime.sendMessage({
     target: 'offscreen', op: 'start', streamId, meetingId,
-    baseUrl: settings.baseUrl, apiKey: settings.apiKey,
+    baseUrl: stt.baseUrl, apiKey: stt.apiKey,
     sttModel: settings.sttModel || 'nvidia/parakeet-ctc-1.1b-asr',
     sttLanguage: settings.sttLanguage || '', chunkMs: 600000, baseTime: Date.now(),
   });

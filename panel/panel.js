@@ -219,6 +219,10 @@ async function renderSettings(epoch) {
     Object.assign(document.createElement('input'), { value: settings.sttModel ?? 'nvidia/parakeet-ctc-1.1b-asr' }));
   const sttLanguage = field('Bahasa STT (mis. id, en — kosong = auto)',
     Object.assign(document.createElement('input'), { value: settings.sttLanguage ?? '' }));
+  const sttBaseUrl = field('STT Base URL (kosong = ikut Base URL di atas; whisper lokal mis. http://localhost:8080/v1, atau URL 9Router)',
+    Object.assign(document.createElement('input'), { value: settings.sttBaseUrl ?? '' }));
+  const sttApiKey = field('STT API key (kosong = tanpa auth)',
+    Object.assign(document.createElement('input'), { type: 'password', value: settings.sttApiKey ?? '' }));
 
   const note = el('span', 'muted', '');
   const setNote = (cls, text) => { note.className = cls; note.textContent = ' ' + text; };
@@ -264,9 +268,11 @@ async function renderSettings(epoch) {
   const save = el('button', null, 'Simpan');
   save.addEventListener('click', async () => {
     const base = normalizedBase();
+    const sttBase = sttBaseUrl.value.trim().replace(/\/+$/, '');
     let warning = null;
     try {
       await ensureOrigin(base);
+      if (sttBase) await ensureOrigin(sttBase);
     } catch (e) {
       if (e.message === 'Base URL tidak valid.') return setNote('err', e.message);
       warning = e.message; // izin ditolak → tetap simpan, tapi beri tahu
@@ -280,6 +286,8 @@ async function renderSettings(epoch) {
         transcriptSource: source.value,
         sttModel: sttModel.value.trim() || 'nvidia/parakeet-ctc-1.1b-asr',
         sttLanguage: sttLanguage.value.trim(),
+        sttBaseUrl: sttBase,
+        sttApiKey: sttApiKey.value.trim(),
       },
     });
     if (warning) setNote('err', `Tersimpan, tapi ${warning} Request bisa gagal.`);
