@@ -1,5 +1,5 @@
 // background/service-worker.js
-importScripts('/lib/merge.js', '/lib/openai.js', '/lib/stt.js');
+importScripts('/lib/merge.js', '/lib/openai.js', '/lib/stt.js', '/lib/audiostore.js');
 
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 
@@ -21,6 +21,23 @@ function updateBadge() {
 
 // Mode audio: state rekaman + lifecycle offscreen document.
 let rec = { recording: false, transcribing: false, meetingId: null };
+
+// Judul tab saat mulai rekam — mode audio tak punya sumber judul lain. Disimpan
+// di storage.session, bukan variabel modul: jarak mulai→simpan bisa berjam-jam
+// dan SW MV3 pasti mati di antaranya (judul akan diam-diam jadi meeting id).
+const setRecTitle = (title) => chrome.storage.session.set({ recTitle: title });
+const getRecTitle = async () => (await chrome.storage.session.get('recTitle')).recTitle ?? null;
+
+// Judul tab Meet: Chrome menaruh "Meet" di DEPAN (`Meet – abc-defg-hij`), tapi
+// bentuk trailing " - Google Meet" juga muncul di sebagian versi/locale.
+// Sisa yang kosong atau cuma meeting id bukan judul yang berguna.
+function titleFromTab(tabTitle, meetingId) {
+  const t = String(tabTitle ?? '')
+    .replace(/^Meet\s*[-—–]\s*/, '')
+    .replace(/\s*[-—–]\s*Google Meet\s*$/, '')
+    .trim();
+  return !t || t === meetingId ? meetingId : t;
+}
 
 function broadcastRec(extra = {}) {
   notifyPanel({ type: 'rec-state', recording: rec.recording, transcribing: rec.transcribing, ...extra });
@@ -75,6 +92,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     }
     const meetingId = meetingIdFromUrl(tab?.url) || active.id;
     if (!meetingId) { broadcastRec({ error: 'Bukan halaman meeting aktif.' }); return; }
+    await setRecTitle(titleFromTab(tab?.title, meetingId));
     try {
       const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
       await startRecording({ streamId, meetingId });
@@ -106,6 +124,54 @@ async function startRecording({ streamId, meetingId }) {
   });
 }
 
+// Transkrip ulang dari audio tersimpan: offscreen yang mengerjakan (bukan SW —
+// SW MV3 bisa dimatikan di tengah loop upload yang panjang).
+async function regenerateTranscript(meetingId) {
+  if (rec.recording || rec.transcribing) throw new Error('Rekaman/transkrip masih berjalan.');
+  // rec di-set SEBELUM await pertama: ini satu-satunya penyerialisasi transkrip.
+  // Kalau dipasang setelah await (mis. setelah loadAudioMeta), dua panggilan
+  // regenerate-transcript beruntun (klik ganda dari panel) sama-sama lolos
+  // guard di atas sebelum salah satu sempat menandai transcribing — dua loop
+  // transkrip jalan bersamaan dan meeting yang sama dapat dua audio-transcript.
+  rec = { recording: false, transcribing: true, meetingId };
+  updateBadge();
+  broadcastRec();
+  try {
+    // Tidak ada cek hasOffscreen() di sini: dokumen offscreen ditutup secara
+    // fire-and-forget setelah transkrip selesai, jadi klik di sela penutupan itu
+    // akan salah ditolak — dan kalau closeDocument gagal (rejection-nya ditelan),
+    // transkrip ulang terblokir selamanya. Penjaganya ada di offscreen sendiri
+    // (busy || recorder), yang justru selamat dari restart SW dan membalas
+    // {ok:false}; balasan itu diperiksa di bawah.
+    const meta = await globalThis.MeetAudioStore.loadAudioMeta();
+    if (!meta) throw new Error('Tidak ada audio tersimpan.');
+    if (meta.meetingId !== meetingId) {
+      throw new Error('Audio tersimpan milik meeting lain — hanya rekaman terakhir yang disimpan.');
+    }
+    const { settings = {} } = await chrome.storage.local.get('settings');
+    const stt = globalThis.MeetStt.sttEndpoint(settings);
+    await ensureOffscreen();
+    // Balasan diperiksa, bukan cuma "tidak reject": side panel yang terbuka
+    // juga sebuah receiving end, jadi sendMessage tetap resolve walau offscreen
+    // sudah tertutup — dan rec.transcribing macet true tanpa ada yang bekerja.
+    // Panel tidak pernah membalas pesan ini, jadi balasan offscreen yang menang.
+    const res = await chrome.runtime.sendMessage({
+      target: 'offscreen', op: 'retranscribe', meetingId,
+      baseUrl: stt.baseUrl, apiKey: stt.apiKey,
+      sttModel: settings.sttModel || 'nvidia/parakeet-ctc-1.1b-asr',
+      sttLanguage: settings.sttLanguage || '',
+    });
+    if (!res?.ok) throw new Error(res?.error || 'Offscreen tidak merespons — transkrip ulang tidak dimulai.');
+  } catch (e) {
+    // Gagal sebelum offscreen mulai kerja → rec harus balik, jangan macet di
+    // transcribing (memblok start/stop rekam & regenerate berikutnya selamanya).
+    rec = { recording: false, transcribing: false, meetingId: null };
+    updateBadge();
+    broadcastRec();
+    throw e;
+  }
+}
+
 async function stopRecording() {
   // rec.transcribing → stop kedua (double-click) diblok: cegah transkrip dobel.
   if (rec.transcribing || (!rec.recording && !(await hasOffscreen()))) return;
@@ -116,15 +182,17 @@ async function stopRecording() {
   chrome.runtime.sendMessage({ target: 'offscreen', op: 'stop' });
 }
 
-async function saveAudioTranscript({ meetingId, segments }) {
+async function saveAudioTranscript({ meetingId, segments, baseTime }) {
   const key = 'meeting:' + meetingId;
   const data = await chrome.storage.local.get([key, 'meetings']);
   const meeting = data[key] ?? {
-    id: meetingId, title: meetingId, startedAt: Date.now(), endedAt: null, segments: [], mom: null,
+    // startedAt = waktu MULAI rekam, bukan waktu simpan: kalau dipakai waktu
+    // simpan, segmen ber-timestamp lebih awal dari "mulai" meeting-nya.
+    id: meetingId, title: (await getRecTitle()) || meetingId, startedAt: baseTime ?? Date.now(),
+    endedAt: null, segments: [], mom: null,
   };
   meeting.source = 'audio';
-  for (const seg of segments) globalThis.MeetMerge.upsertSegment(meeting.segments,
-    { ...seg, id: `audio:${seg.t}:${meeting.segments.length}` });
+  meeting.segments = globalThis.MeetMerge.replaceAudioSegments(meeting.segments, segments);
   const meetings = data.meetings ?? [];
   if (!meetings.includes(meetingId)) meetings.unshift(meetingId);
   await chrome.storage.local.set({ [key]: meeting, meetings });
@@ -302,18 +370,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     );
     return true; // sendResponse async
   }
-  if (msg.type === 'start-recording') {
-    startRecording(msg).catch((e) => {
-      // Gagal setelah rec di-set → reset state + badge, jangan tinggalkan stuck.
-      rec = { recording: false, transcribing: false, meetingId: null };
-      updateBadge();
-      broadcastRec({ error: e.message });
-    });
-    return false;
-  }
   if (msg.type === 'stop-recording') {
     stopRecording();
     return false;
+  }
+  if (msg.type === 'audio-meta') {
+    globalThis.MeetAudioStore.loadAudioMeta()
+      .then((m) => sendResponse(m), () => sendResponse(null));
+    return true; // sendResponse async
+  }
+  if (msg.type === 'regenerate-transcript') {
+    regenerateTranscript(msg.id).then(
+      () => sendResponse({ ok: true }),
+      (e) => sendResponse({ ok: false, error: e.message })
+    );
+    return true;
   }
   if (msg.type === 'audio-progress') {
     broadcastRec({ done: msg.done, total: msg.total });
@@ -322,8 +393,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'audio-transcript') {
     rec = { recording: false, transcribing: false, meetingId: null };
     updateBadge();
+    if (!msg.segments.length) {
+      // Kosong = STT tidak menghasilkan teks. Tanpa pesan ini user melihat
+      // meeting kosong yang tampak seperti berhasil.
+      broadcastRec({ error: 'Transkrip kosong — STT tidak menghasilkan teks. Cek endpoint/model STT di Settings, lalu coba "Transkrip ulang".' });
+    } else {
+      broadcastRec();
+    }
+    // Meeting TETAP disimpan walau kosong: tombol "Transkrip ulang" hanya ada
+    // di dalam view meeting tersimpan, jadi tanpa record ini pesan di atas
+    // menyuruh klik tombol yang tidak akan pernah muncul dan audio yang sudah
+    // tersimpan jadi tak terjangkau selamanya.
     enqueueWrite(() => saveAudioTranscript(msg));
-    broadcastRec();
     chrome.offscreen.closeDocument?.().catch(() => {});
     return false;
   }
@@ -332,6 +413,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     updateBadge();
     broadcastRec({ error: msg.error });
     chrome.offscreen.closeDocument?.().catch(() => {});
+    return false;
+  }
+  if (msg.type === 'audio-warn') {
+    broadcastRec({ error: msg.error });
     return false;
   }
   if (msg.type === 'send-to-gemini') {

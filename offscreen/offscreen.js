@@ -6,10 +6,18 @@ let recorder = null;
 let rotateTimer = null;
 let chunkBlobs = [];   // Blob standalone per chunk
 let cfg = null;        // {baseUrl, apiKey, sttModel, sttLanguage, chunkMs, baseTime, meetingId}
+// Offscreen menyerialisasi dirinya sendiri: guard rec.transcribing di SW cuma
+// bertahan selama SW hidup, padahal SW MV3 bisa mati di tengah upload yang
+// panjang sementara dokumen ini terus bekerja. Tanpa flag ini, perintah stop
+// kedua menimpa audio tersimpan dengan array kosong dan membunuh transkrip
+// yang sedang jalan.
+let busy = false;
 const MIME = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
   ? 'audio/webm;codecs=opus' : 'audio/webm';
 
-function toSW(msg) { chrome.runtime.sendMessage(msg); }
+// catch: SW sedang teardown & panel tertutup → tak ada penerima, dan rejection
+// tanpa handler jadi unhandled rejection di offscreen document.
+function toSW(msg) { chrome.runtime.sendMessage(msg).catch(() => {}); }
 
 function startChunkRecorder() {
   const data = []; // per-recorder: rotasi tak boleh menabrak data recorder lain
@@ -43,41 +51,108 @@ async function start(msg) {
   rotateTimer = setInterval(rotateChunk, msg.chunkMs);
 }
 
-async function stopAndTranscribe() {
-  clearInterval(rotateTimer);
-  rotateTimer = null;
-  // Finalisasi chunk terakhir (tunggu onstop).
-  await new Promise((resolve) => {
-    if (!recorder || recorder.state === 'inactive') return resolve();
-    recorder.addEventListener('stop', resolve, { once: true });
-    recorder.stop();
-  });
-  stream?.getTracks().forEach((t) => t.stop());
-  await audioCtx?.close().catch(() => {});
-  audioCtx = null; stream = null; recorder = null;
-
+// Dipakai dua jalur: setelah rekam selesai, dan tombol "Transkrip ulang".
+async function transcribeChunks(blobs, c) {
   const results = [];
-  for (let i = 0; i < chunkBlobs.length; i++) {
-    toSW({ type: 'audio-progress', meetingId: cfg.meetingId, done: i, total: chunkBlobs.length });
+  for (let i = 0; i < blobs.length; i++) {
+    toSW({ type: 'audio-progress', meetingId: c.meetingId, done: i, total: blobs.length });
     try {
       results.push(await globalThis.MeetOpenAI.transcribeAudio({
-        blob: chunkBlobs[i], baseUrl: cfg.baseUrl, apiKey: cfg.apiKey,
-        model: cfg.sttModel, language: cfg.sttLanguage,
+        blob: blobs[i], baseUrl: c.baseUrl, apiKey: c.apiKey,
+        model: c.sttModel, language: c.sttLanguage,
       }));
     } catch (e) {
       results.push({ error: e.message });
     }
   }
-  const segments = globalThis.MeetStt.mergeSttChunks(results, cfg.chunkMs, cfg.baseTime);
-  chunkBlobs = [];
-  toSW({ type: 'audio-transcript', meetingId: cfg.meetingId, segments });
+  const segments = globalThis.MeetStt.mergeSttChunks(results, c.chunkMs, c.baseTime);
+  toSW({ type: 'audio-transcript', meetingId: c.meetingId, segments, baseTime: c.baseTime });
 }
 
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.target !== 'offscreen') return;
+async function stopAndTranscribe() {
+  // cfg null = dokumen ini belum pernah merekam (mis. baru dibuat untuk
+  // retranscribe, lalu kena 'stop' dari SW yang rec-nya ter-reset restart).
+  // Tanpa guard ini cfg.meetingId di bawah melempar TypeError.
+  if (!cfg) return;
+  busy = true;
+  try {
+    clearInterval(rotateTimer);
+    rotateTimer = null;
+    // Finalisasi chunk terakhir (tunggu onstop), tapi jangan tanpa batas:
+    // kalau tab dibongkar di saat yang salah, event 'stop' bisa tak pernah
+    // datang — promise menggantung, finally tak jalan, dan busy macet true:
+    // stop & transkrip ulang ditolak selamanya sampai browser di-restart.
+    const finalized = await Promise.race([
+      new Promise((resolve) => {
+        if (!recorder || recorder.state === 'inactive') return resolve(true);
+        recorder.addEventListener('stop', () => resolve(true), { once: true });
+        recorder.stop();
+      }),
+      new Promise((resolve) => setTimeout(() => resolve(false), 5000)), // 5s cukup untuk finalisasi satu chunk
+    ]);
+    // Timeout: chunk terakhir (sampai chunkMs = 10 menit audio) tidak masuk
+    // chunkBlobs. Jangan diam — user harus tahu ujung rekaman hilang.
+    if (!finalized) toSW({ type: 'audio-warn', meetingId: cfg?.meetingId,
+      error: 'Potongan terakhir gagal difinalisasi — bagian akhir rekaman mungkin hilang.' });
+    stream?.getTracks().forEach((t) => t.stop());
+    await audioCtx?.close().catch(() => {});
+    audioCtx = null; stream = null; recorder = null;
+
+    // Simpan dulu, transkrip belakangan: endpoint STT salah tidak boleh
+    // menghanguskan rekaman — audio tetap bisa ditranskrip ulang.
+    await globalThis.MeetAudioStore.saveAudio({
+      meetingId: cfg.meetingId, chunkMs: cfg.chunkMs, baseTime: cfg.baseTime, blobs: chunkBlobs,
+    }).catch((e) => toSW({ type: 'audio-warn', meetingId: cfg.meetingId,
+      error: 'Audio gagal disimpan untuk transkrip ulang: ' + e.message }));
+    const blobs = chunkBlobs;
+    chunkBlobs = [];
+    await transcribeChunks(blobs, cfg);
+  } finally {
+    busy = false;
+  }
+}
+
+async function retranscribe(msg) {
+  busy = true;
+  try {
+    const saved = await globalThis.MeetAudioStore.loadAudio();
+    if (!saved) throw new Error('Audio rekaman tidak tersimpan lagi.');
+    if (saved.meetingId !== msg.meetingId) {
+      throw new Error('Audio tersimpan milik meeting lain — hanya rekaman terakhir yang disimpan.');
+    }
+    // chunkMs/baseTime dari rekaman asli supaya timestamp segmen tetap sama;
+    // endpoint & model diambil dari settings TERBARU lewat msg.
+    await transcribeChunks(saved.blobs, { ...msg, chunkMs: saved.chunkMs, baseTime: saved.baseTime });
+  } finally {
+    busy = false;
+  }
+}
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.target !== 'offscreen') return false;
   if (msg.op === 'start') {
     start(msg).catch((e) => toSW({ type: 'audio-error', meetingId: msg.meetingId, error: e.message }));
   } else if (msg.op === 'stop') {
-    stopAndTranscribe().catch((e) => toSW({ type: 'audio-error', meetingId: cfg?.meetingId, error: e.message }));
+    // Stop kedua saat masih sibuk: recorder sudah null, jadi tanpa guard ini
+    // ia lolos sampai saveAudio dengan blobs kosong dan menimpa rekaman asli.
+    if (busy) {
+      toSW({ type: 'audio-warn', meetingId: cfg?.meetingId,
+        error: 'Transkrip masih berjalan — perintah stop diabaikan.' });
+    } else {
+      stopAndTranscribe().catch((e) => toSW({ type: 'audio-error', meetingId: cfg?.meetingId, error: e.message }));
+    }
+  } else if (msg.op === 'retranscribe') {
+    // Balasan wajib: side panel yang terbuka juga receiving end, jadi hanya
+    // balasan dari sini yang membuktikan offscreen benar-benar mengerjakannya.
+    // recorder != null → rekaman masih jalan, transkrip ulang akan membuang
+    // chunk-nya lewat closeDocument() di akhir.
+    if (busy || recorder) {
+      sendResponse({ ok: false, error: 'Rekaman/transkrip masih berjalan.' });
+      return false;
+    }
+    sendResponse({ ok: true });
+    retranscribe(msg).catch((e) =>
+      toSW({ type: 'audio-error', meetingId: msg.meetingId, error: e.message }));
   }
+  return false;
 });

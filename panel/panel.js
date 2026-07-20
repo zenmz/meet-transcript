@@ -34,6 +34,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   } else if (msg.type === 'rec-state') {
     recState = { recording: msg.recording, transcribing: msg.transcribing,
       done: msg.done ?? 0, total: msg.total ?? 0, error: msg.error ?? null };
+    audioMetaKey = null; // audio tersimpan hanya berubah lewat siklus rekam/transkrip
     if (tab === 'live') render();
   }
 });
@@ -62,6 +63,8 @@ function download(name, text) {
 // pass yang kalah cepat tidak boleh menimpa DOM pass yang lebih baru.
 let renderEpoch = 0;
 let lastRenderedKey = null; // view terakhir yang digambar renderMeeting (id|live)
+let audioMeta = null;       // hasil audio-meta terakhir
+let audioMetaKey = null;    // view key yang menghasilkannya (null = wajib tanya lagi)
 const momErrors = new Map(); // meetingId → pesan error MoM terakhir
 
 async function render() {
@@ -73,9 +76,36 @@ async function render() {
 
 async function renderMeeting(id, live, epoch) {
   const meeting = id ? await getMeeting(id) : null;
+  const viewKey = `${id}|${live}`;
+  // Hanya rekaman TERAKHIR yang disimpan — tombol "Transkrip ulang" muncul
+  // kalau audio tersimpan memang milik meeting ini. Diambil DI SINI, sebelum
+  // replaceChildren: kalau await-nya setelah DOM dikosongkan, broadcast status
+  // tiap 2 detik membuat action bar + seluruh daftar segmen berkedip.
+  // Tidak ditanya ulang untuk view yang sama: tiap panggilan audio-meta = satu
+  // indexedDB.open + transaksi di SW, sedangkan broadcast status merender ulang
+  // view ini tiap 2 detik tanpa henti. Isinya cuma berubah lewat siklus
+  // rekam/transkrip, dan cache dibuang di listener rec-state.
+  // Hasil negatif TIDAK di-cache: rekaman pertama menyiarkan rec-state sebelum
+  // record meeting-nya tersimpan, jadi render saat itu melihat meeting null —
+  // meng-cache-nya membuat tombol tak pernah muncul di tab Live sesi itu.
+  // Key ikut dinolkan, bukan diisi viewKey: mengisinya meng-cache hasil
+  // negatif (tombol tak pernah muncul), membiarkannya membuat key menunjuk
+  // view yang nilainya sudah dibuang — balik ke view itu melewati fetch dan
+  // tombolnya hilang. Nol = fetch lagi saat view audio dirender.
+  if (meeting?.source !== 'audio') { audioMeta = null; audioMetaKey = null; }
+  else if (audioMetaKey !== viewKey) {
+    // undefined = round-trip GAGAL (SW teardown), null = SW menjawab "tak ada
+    // audio". Yang gagal tidak di-cache (kalau di-cache, tombol tersembunyi
+    // sampai rec-state berikutnya walau audionya ada); yang menjawab null
+    // di-cache (kalau tidak, render tiap 2 detik memanggil audio-meta terus
+    // — persis beban yang cache ini ada untuk mencegah).
+    const res = await chrome.runtime.sendMessage({ type: 'audio-meta' }).catch(() => undefined);
+    audioMeta = res ?? null;
+    if (res !== undefined) audioMetaKey = viewKey;
+  }
   if (epoch !== renderEpoch) return; // pass lebih baru sudah jalan
-  const sameView = `${id}|${live}` === lastRenderedKey;
-  lastRenderedKey = `${id}|${live}`;
+  const sameView = viewKey === lastRenderedKey;
+  lastRenderedKey = viewKey;
   // Navigasi ke view lain: mulai dari bawah (live) / atas (riwayat).
   // Rerender view yang sama: pertahankan posisi baca.
   const stickToBottom = live && (!sameView || view.scrollHeight - view.scrollTop - view.clientHeight < 40);
@@ -125,6 +155,18 @@ async function renderMeeting(id, live, epoch) {
   view.append(el('p', 'muted', new Date(meeting.startedAt).toLocaleString()));
 
   if (momErrors.has(meeting.id)) view.append(el('div', 'error', momErrors.get(meeting.id)));
+
+  // Error rekam/transkrip di atas hanya dicat di bar tab Live. Kalau meeting
+  // rekamannya bukan meeting aktif, pesan "Transkrip kosong… coba Transkrip
+  // ulang" muncul di Live tanpa tombolnya, sedangkan tombolnya (di Riwayat)
+  // muncul tanpa pesannya — dicat di sini supaya keduanya ketemu.
+  // Digate ke meeting pemilik audio: recState.error satu slot global, tanpa
+  // gate ini error rekaman meeting A ikut tercat di meeting caption lama B
+  // yang tak punya tombolnya — persis kebingungan yang mau dihilangkan.
+  if (!live && recState.error && audioMeta?.meetingId === meeting.id) {
+    view.append(el('div', 'err', recState.error));
+  }
+
   const actions = el('div', 'actions');
   const btn = (label, fn) => {
     const b = el('button', null, label);
@@ -176,6 +218,23 @@ async function renderMeeting(id, live, epoch) {
     if (!res?.ok) momErrors.set(meeting.id, res?.error ?? 'Gagal menghubungi service worker.');
     render(); // state persisten + render(): epoch-safe, error tetap tampil setelah rerender
   });
+  // Disembunyikan saat rekam/transkrip jalan: audio tersimpan masih milik
+  // rekaman SEBELUMNYA, jadi menawarkannya di samping "Stop rekam" cuma
+  // membingungkan — SW menolak kliknya juga.
+  if (audioMeta?.meetingId === meeting.id && !recState.recording && !recState.transcribing) {
+    const reBtn = btn('Transkrip ulang', async () => {
+      reBtn.disabled = true;
+      reBtn.textContent = 'Mentranskrip…';
+      momErrors.delete(meeting.id);
+      const res = await chrome.runtime.sendMessage(
+        { type: 'regenerate-transcript', id: meeting.id }).catch(() => null);
+      if (!res?.ok) {
+        momErrors.set(meeting.id, res?.error ?? 'Gagal menghubungi service worker.');
+        render();
+      }
+      // Sukses: hasil datang lewat broadcast meeting-updated, panel rerender sendiri.
+    });
+  }
   view.append(actions);
 
   const list = el('div');

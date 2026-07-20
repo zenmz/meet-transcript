@@ -2,8 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 await import('../lib/merge.js'); // classic script: side effect set globalThis.MeetMerge
-const { upsertSegment, formatTranscript, formatMarkdown, fillTemplate, DEFAULT_MOM_TEMPLATE } =
-  globalThis.MeetMerge;
+const { upsertSegment, replaceAudioSegments, formatTranscript, formatMarkdown, fillTemplate,
+  DEFAULT_MOM_TEMPLATE } = globalThis.MeetMerge;
+
+const audio = (t, text) => ({ t, text, speaker: '' });
 
 test('upsertSegment appends segmen dengan id baru', () => {
   const segs = [];
@@ -21,6 +23,37 @@ test('upsertSegment update in-place untuk id yang sama, tidak duplikat', () => {
   assert.equal(segs.length, 2);
   assert.equal(segs[0].text, 'halo semuanya');
   assert.equal(segs[1].text, 'hai');
+});
+
+test('replaceAudioSegments mengisi meeting kosong dan memberi id berurutan', () => {
+  const out = replaceAudioSegments([], [audio(0, 'halo'), audio(1000, 'hai')]);
+  assert.deepEqual(out.map((s) => s.id), ['audio:0', 'audio:1']);
+  assert.deepEqual(out.map((s) => s.text), ['halo', 'hai']);
+});
+
+test('replaceAudioSegments transkrip ulang MENGGANTI, bukan menumpuk', () => {
+  const first = replaceAudioSegments([], [audio(0, '[transkrip gagal]'), audio(1000, '[transkrip gagal]')]);
+  const second = replaceAudioSegments(first, [audio(0, 'halo'), audio(1000, 'hai')]);
+  assert.equal(second.length, 2);
+  assert.deepEqual(second.map((s) => s.text), ['halo', 'hai']);
+});
+
+test('replaceAudioSegments mempertahankan segmen dari caption', () => {
+  const withCaption = [{ id: 'cap-1', speaker: 'Ani', text: 'halo', t: 0 }];
+  const out = replaceAudioSegments(replaceAudioSegments(withCaption, [audio(5, 'a')]), [audio(5, 'b')]);
+  assert.equal(out.length, 2);
+  assert.equal(out[0].id, 'cap-1');
+  assert.equal(out[1].text, 'b');
+});
+
+// Transkrip ulang dengan model STT yang balas 200 + teks kosong menghasilkan
+// nol segmen; transkrip lama yang sudah bagus tidak boleh ikut hilang.
+test('replaceAudioSegments dengan hasil kosong TIDAK menghapus transkrip lama', () => {
+  const first = replaceAudioSegments([{ id: 'cap-1', text: 'x', speaker: 'Ani', t: 0 }],
+    [audio(0, 'halo'), audio(1000, 'hai')]);
+  const out = replaceAudioSegments(first, []);
+  assert.deepEqual(out.map((s) => s.id), ['cap-1', 'audio:0', 'audio:1']);
+  assert.deepEqual(out.map((s) => s.text), ['x', 'halo', 'hai']);
 });
 
 test('formatTranscript satu baris per segmen', () => {
