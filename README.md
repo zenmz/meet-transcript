@@ -3,11 +3,38 @@
 Chrome extension (Manifest V3): transkrip Google Meet dari live caption,
 riwayat meeting, download .txt/.md, dan generate MoM via OpenAI.
 
-## Install
+## Install (untuk tim — tak perlu Chrome Web Store)
 
-1. Buka `chrome://extensions`, nyalakan **Developer mode**.
-2. **Load unpacked** → pilih folder proyek ini.
-3. Pin icon "Meet Transcript" di toolbar.
+Ekstensi ini dipasang lewat **Load unpacked**. Auto-update TIDAK ada di jalur
+ini — ambil versi baru lalu klik reload. Dua cara mendapatkan filenya:
+
+**Cara 1 — Download ZIP (paling gampang, tanpa git)**
+
+1. Buka halaman repo di GitHub → tombol hijau **Code** → **Download ZIP**
+   (atau ambil dari tab **Releases** kalau ada rilis ber-versi).
+2. Extract ZIP-nya ke folder tetap (jangan di dalam Downloads yang sering
+   dibersihkan — kalau foldernya hilang, ekstensinya mati).
+3. `chrome://extensions` → nyalakan **Developer mode** (kanan atas) →
+   **Load unpacked** → pilih folder hasil extract (yang berisi `manifest.json`).
+4. Pin ikon **Meet Transcript** di toolbar.
+5. Update: download ZIP baru, replace folder, lalu `chrome://extensions` →
+   klik **reload** (↻) di kartu ekstensi.
+
+**Cara 2 — git clone (kalau mau `git pull` untuk update)**
+
+1. `git clone <url-repo>` ke folder tetap.
+2. `chrome://extensions` → **Developer mode** → **Load unpacked** → pilih
+   folder hasil clone.
+3. Update: `git pull` di folder itu, lalu klik **reload** (↻) di kartu ekstensi.
+
+> Peringatan "Developer mode extensions" muncul tiap Chrome start — normal untuk
+> ekstensi yang tidak dari Web Store, aman diabaikan (jangan klik "Remove").
+
+**Privasi:** ekstensi merekam/menyalin isi meeting dan mengirim transkrip
+(dan audio, di mode rekam) ke endpoint STT/LLM yang kamu set di Settings
+(OpenAI / 9Router / Gemini). Isi meeting keluar ke layanan itu — pastikan tim
+sadar dan endpoint-nya sesuai kebijakan data kalian. API key disimpan lokal di
+`chrome.storage.local`, tidak ikut ke repo.
 
 ## Pakai
 
