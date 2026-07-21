@@ -3,37 +3,37 @@
 Chrome extension (Manifest V3): transkrip Google Meet dari live caption,
 riwayat meeting, download .txt/.md, dan generate MoM via OpenAI.
 
-## Install (untuk tim — tak perlu Chrome Web Store)
+## Install untuk tim — tak perlu Chrome Web Store
 
 Ekstensi ini dipasang lewat **Load unpacked**. Auto-update TIDAK ada di jalur
 ini — ambil versi baru lalu klik reload. Dua cara mendapatkan filenya:
 
-**Cara 1 — ZIP rilis (paling gampang, tanpa git)**
+**Cara 1 — ZIP rilis, paling gampang tanpa git**
 
 1. Buka tab **[Releases](../../releases)** repo → ambil rilis terbaru →
-   download aset **`meet-transcript-vX.Y.Z.zip`** (di bagian *Assets*). Ini
+   download aset **`meet-transcript-vX.Y.Z.zip`** di bagian *Assets*. Ini
    paket bersih — cuma file ekstensi, tanpa docs/test.
-2. Extract ZIP-nya ke folder tetap (jangan di dalam Downloads yang sering
-   dibersihkan — kalau foldernya hilang, ekstensinya mati).
-3. `chrome://extensions` → nyalakan **Developer mode** (kanan atas) →
-   **Load unpacked** → pilih folder hasil extract (yang berisi `manifest.json`).
+2. Extract ZIP-nya ke folder tetap. Jangan taruh di Downloads yang sering
+   dibersihkan — kalau foldernya hilang, ekstensinya mati.
+3. `chrome://extensions` → nyalakan **Developer mode** di kanan atas →
+   **Load unpacked** → pilih folder hasil extract yang berisi `manifest.json`.
 4. Pin ikon **Meet Transcript** di toolbar.
 5. Update: download ZIP rilis baru, replace folder, lalu `chrome://extensions`
-   → klik **reload** (↻) di kartu ekstensi.
+   → klik **reload** di kartu ekstensi.
 
-**Cara 2 — git clone (kalau mau `git pull` untuk update)**
+**Cara 2 — git clone, kalau mau `git pull` untuk update**
 
 1. `git clone <url-repo>` ke folder tetap.
 2. `chrome://extensions` → **Developer mode** → **Load unpacked** → pilih
    folder hasil clone.
-3. Update: `git pull` di folder itu, lalu klik **reload** (↻) di kartu ekstensi.
+3. Update: `git pull` di folder itu, lalu klik **reload** di kartu ekstensi.
 
 > Peringatan "Developer mode extensions" muncul tiap Chrome start — normal untuk
-> ekstensi yang tidak dari Web Store, aman diabaikan (jangan klik "Remove").
+> ekstensi yang tidak dari Web Store, aman diabaikan. Jangan klik "Remove".
 
-**Privasi:** ekstensi merekam/menyalin isi meeting dan mengirim transkrip
-(dan audio, di mode rekam) ke endpoint STT/LLM yang kamu set di Settings
-(OpenAI / 9Router / Gemini). Isi meeting keluar ke layanan itu — pastikan tim
+**Privasi:** ekstensi merekam/menyalin isi meeting dan mengirim transkrip —
+dan audio di mode rekam — ke endpoint STT/LLM yang kamu set di Settings, mis.
+OpenAI / 9Router / Gemini. Isi meeting keluar ke layanan itu — pastikan tim
 sadar dan endpoint-nya sesuai kebijakan data kalian. API key disimpan lokal di
 `chrome.storage.local`, tidak ikut ke repo.
 
