@@ -119,3 +119,12 @@ masuk 30 detik.
 ```bash
 node --test test/*.test.mjs
 ```
+
+## Rilis versi baru (maintainer)
+
+1. Naikkan `"version"` di `manifest.json`, commit, `git push`.
+2. `./scripts/pack.sh --release` — build ZIP bersih ke `dist/` lalu bikin
+   GitHub Release ber-tag `vX.Y.Z` dengan ZIP-nya sebagai aset.
+
+`./scripts/pack.sh` tanpa argumen cuma build ZIP-nya (tak publish). `dist/`
+di-gitignore.
