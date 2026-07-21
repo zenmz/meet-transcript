@@ -8,17 +8,18 @@ riwayat meeting, download .txt/.md, dan generate MoM via OpenAI.
 Ekstensi ini dipasang lewat **Load unpacked**. Auto-update TIDAK ada di jalur
 ini — ambil versi baru lalu klik reload. Dua cara mendapatkan filenya:
 
-**Cara 1 — Download ZIP (paling gampang, tanpa git)**
+**Cara 1 — ZIP rilis (paling gampang, tanpa git)**
 
-1. Buka halaman repo di GitHub → tombol hijau **Code** → **Download ZIP**
-   (atau ambil dari tab **Releases** kalau ada rilis ber-versi).
+1. Buka tab **[Releases](../../releases)** repo → ambil rilis terbaru →
+   download aset **`meet-transcript-vX.Y.Z.zip`** (di bagian *Assets*). Ini
+   paket bersih — cuma file ekstensi, tanpa docs/test.
 2. Extract ZIP-nya ke folder tetap (jangan di dalam Downloads yang sering
    dibersihkan — kalau foldernya hilang, ekstensinya mati).
 3. `chrome://extensions` → nyalakan **Developer mode** (kanan atas) →
    **Load unpacked** → pilih folder hasil extract (yang berisi `manifest.json`).
 4. Pin ikon **Meet Transcript** di toolbar.
-5. Update: download ZIP baru, replace folder, lalu `chrome://extensions` →
-   klik **reload** (↻) di kartu ekstensi.
+5. Update: download ZIP rilis baru, replace folder, lalu `chrome://extensions`
+   → klik **reload** (↻) di kartu ekstensi.
 
 **Cara 2 — git clone (kalau mau `git pull` untuk update)**
 
