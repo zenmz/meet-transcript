@@ -15,5 +15,9 @@
     }
   ],
   "side_panel": { "default_path": "panel/panel.html" },
-  "action": { "default_title": "Meet Transcript" }
+  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
+  "action": {
+    "default_title": "Meet Transcript",
+    "default_icon": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+  }
 }
