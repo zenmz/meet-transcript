@@ -396,7 +396,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (!msg.segments.length) {
       // Kosong = STT tidak menghasilkan teks. Tanpa pesan ini user melihat
       // meeting kosong yang tampak seperti berhasil.
-      broadcastRec({ error: 'Transkrip kosong — STT tidak menghasilkan teks. Cek endpoint/model STT di Settings, lalu coba "Transkrip ulang".' });
+      // Tidak menyebut "Transkrip ulang": tombolnya hanya muncul kalau audio
+      // benar-benar tersimpan (mis. saveAudio gagal → tak ada tombol). Tombol,
+      // saat ada, sudah berlabel sendiri — biar keberadaannya yang menawarkan.
+      broadcastRec({ error: 'Transkrip kosong — STT tidak menghasilkan teks. Cek endpoint/model STT di Settings.' });
     } else {
       broadcastRec();
     }
