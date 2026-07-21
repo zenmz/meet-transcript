@@ -156,13 +156,12 @@ async function renderMeeting(id, live, epoch) {
 
   if (momErrors.has(meeting.id)) view.append(el('div', 'error', momErrors.get(meeting.id)));
 
-  // Error rekam/transkrip di atas hanya dicat di bar tab Live. Kalau meeting
-  // rekamannya bukan meeting aktif, pesan "Transkrip kosong… coba Transkrip
-  // ulang" muncul di Live tanpa tombolnya, sedangkan tombolnya (di Riwayat)
-  // muncul tanpa pesannya — dicat di sini supaya keduanya ketemu.
-  // Digate ke meeting pemilik audio: recState.error satu slot global, tanpa
-  // gate ini error rekaman meeting A ikut tercat di meeting caption lama B
-  // yang tak punya tombolnya — persis kebingungan yang mau dihilangkan.
+  // Error rekam/transkrip di atas hanya dicat di bar tab Live. Dicat juga di
+  // sini supaya error (mis. "Transkrip kosong") ketemu tombol "Transkrip ulang"
+  // di view meeting tersimpan. Digate ke meeting pemilik audio: recState.error
+  // satu slot global, tanpa gate ini error rekaman meeting A ikut tercat di
+  // meeting caption lama B yang tak punya tombolnya — persis kebingungan yang
+  // mau dihilangkan.
   if (!live && recState.error && audioMeta?.meetingId === meeting.id) {
     view.append(el('div', 'err', recState.error));
   }
