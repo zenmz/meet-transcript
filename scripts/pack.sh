@@ -10,7 +10,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 # File yang Chrome butuh. Tambah di sini kalau ada folder runtime baru.
-ITEMS=(manifest.json README.md background panel content offscreen lib icons)
+# LICENSE + THIRD_PARTY_NOTICES.md WAJIB ikut: ZIP ini mendistribusikan ulang
+# transformers.js (Apache-2.0) dan onnxruntime-web (MIT) di lib/vendor/, dan
+# kedua lisensi itu mensyaratkan teksnya ikut dalam distribusi.
+ITEMS=(manifest.json README.md LICENSE THIRD_PARTY_NOTICES.md background panel content offscreen lib icons)
 
 VER="$(node -p "require('./manifest.json').version")"
 NAME="meet-transcript"
