@@ -22,12 +22,6 @@ function updateBadge() {
 // Mode audio: state rekaman + lifecycle offscreen document.
 let rec = { recording: false, transcribing: false, meetingId: null };
 
-// Judul tab saat mulai rekam — mode audio tak punya sumber judul lain. Disimpan
-// di storage.session, bukan variabel modul: jarak mulai→simpan bisa berjam-jam
-// dan SW MV3 pasti mati di antaranya (judul akan diam-diam jadi meeting id).
-const setRecTitle = (title) => chrome.storage.session.set({ recTitle: title });
-const getRecTitle = async () => (await chrome.storage.session.get('recTitle')).recTitle ?? null;
-
 // Judul tab Meet: Chrome menaruh "Meet" di DEPAN (`Meet – abc-defg-hij`), tapi
 // bentuk trailing " - Google Meet" juga muncul di sebagian versi/locale.
 // Sisa yang kosong atau cuma meeting id bukan judul yang berguna.
@@ -43,12 +37,14 @@ function broadcastRec(extra = {}) {
   notifyPanel({ type: 'rec-state', recording: rec.recording, transcribing: rec.transcribing, ...extra });
 }
 
+// getContexts butuh Chrome 116 — itulah lantai versi ekstensi ini, bukan 114
+// (sidePanel). Fallback chrome.offscreen.hasDocument sengaja TIDAK dipakai:
+// API itu baru ada di Chrome 150+, jadi cabangnya tak pernah tereksekusi di
+// Chrome mana pun, sementara diam-diam mengembalikan false di 114–115 justru
+// membuat stopRecording menyerah tanpa memfinalisasi rekaman.
 async function hasOffscreen() {
-  if (chrome.runtime.getContexts) {
-    const c = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] }).catch(() => []);
-    return c.length > 0;
-  }
-  return chrome.offscreen.hasDocument ? await chrome.offscreen.hasDocument().catch(() => false) : false;
+  const c = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] }).catch(() => []);
+  return c.length > 0;
 }
 
 async function ensureOffscreen() {
@@ -90,15 +86,25 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       broadcastRec({ error: 'Rekaman masih berjalan.' });
       return;
     }
-    const meetingId = meetingIdFromUrl(tab?.url) || active.id;
-    if (!meetingId) { broadcastRec({ error: 'Bukan halaman meeting aktif.' }); return; }
-    await setRecTitle(titleFromTab(tab?.title, meetingId));
+    // HANYA dari URL tab yang diklik — tanpa fallback ke active.id. tabCapture
+    // merekam TAB INI; kalau ini bukan halaman ruang, yang terekam adalah
+    // halaman landing yang sunyi, sementara meeting sungguhan di tab lain yang
+    // kena akibatnya: source-nya dibalik jadi audio, endedAt dihapus, dan
+    // audio tersimpannya dibuang oleh beginAudio.
+    const meetingId = meetingIdFromUrl(tab?.url);
+    if (!meetingId) {
+      broadcastRec({ error: 'Buka halaman ruang Meet-nya dulu — rekaman mengambil audio tab ini.' });
+      return;
+    }
     try {
       const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
-      await startRecording({ streamId, meetingId });
+      await startRecording({ streamId, meetingId, title: titleFromTab(tab?.title, meetingId) });
     } catch (e) {
-      rec = { recording: false, transcribing: false, meetingId: null };
-      updateBadge();
+      // TIDAK mereset rec di sini: klik kedua yang ditolak karena rekaman
+      // pertama sedang jalan juga mendarat di sini, dan resetnya akan mematikan
+      // status rekaman yang sehat (badge padam, tombol Stop hilang, dan saat
+      // meeting selesai onDisconnect melihat recording:false sehingga rekaman
+      // tak pernah difinalisasi). startRecording yang mereset miliknya sendiri.
       broadcastRec({ error: e.message });
     }
   } else if (info.menuItemId === 'rec-stop') {
@@ -106,22 +112,77 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 
-async function startRecording({ streamId, meetingId }) {
-  if (rec.recording || rec.transcribing || await hasOffscreen()) {
-    throw new Error('Rekaman masih berjalan.');
-  }
+// Konfigurasi STT untuk pesan ke offscreen. Satu tempat: start & retranscribe
+// harus memakai aturan endpoint/model/bahasa yang persis sama.
+async function sttConfig() {
   const { settings = {} } = await chrome.storage.local.get('settings');
   const stt = globalThis.MeetStt.sttEndpoint(settings);
-  await ensureOffscreen();
+  return {
+    sttMode: stt.mode, baseUrl: stt.baseUrl, apiKey: stt.apiKey,
+    sttModel: stt.model, sttLanguage: stt.language, sttBrowserModel: stt.sttBrowserModel,
+  };
+}
+
+// Start yang sedang berjalan. stopRecording menunggunya: tanpa itu, klik Stop
+// (atau tab Meet yang ditutup) di detik-detik startup membuat SW mereset rec
+// jadi idle, lalu start selesai dan offscreen merekam sungguhan — rekaman jalan
+// tanpa badge, tanpa tombol Stop, dan semua start berikutnya ditolak.
+let startPromise = null;
+
+async function startRecording({ streamId, meetingId, title }) {
+  // Guard + klaim SINKRON, sebelum await mana pun: dua klik context menu
+  // beruntun sama-sama lolos pre-check di pemanggil (yang punya await sendiri),
+  // dan tanpa klaim di sini keduanya masuk dan yang kedua merusak state yang
+  // pertama.
+  if (rec.recording || rec.transcribing) throw new Error('Rekaman masih berjalan.');
+  const baseTime = Date.now();
   rec = { recording: true, transcribing: false, meetingId };
   updateBadge();
-  broadcastRec();
-  chrome.runtime.sendMessage({
-    target: 'offscreen', op: 'start', streamId, meetingId,
-    baseUrl: stt.baseUrl, apiKey: stt.apiKey,
-    sttModel: settings.sttModel || 'nvidia/parakeet-ctc-1.1b-asr',
-    sttLanguage: settings.sttLanguage || '', chunkMs: 600000, baseTime: Date.now(),
-  });
+  startPromise = (async () => {
+    if (await hasOffscreen()) throw new Error('Rekaman masih berjalan.');
+    await startRecordingInner({ streamId, meetingId, title, baseTime });
+  })();
+  try {
+    await startPromise;
+  } catch (e) {
+    rec = { recording: false, transcribing: false, meetingId: null };
+    updateBadge();
+    // Dokumen offscreen bisa sudah TERLANJUR dibuat sebelum kegagalan. Kalau
+    // dibiarkan, hasOffscreen() true selamanya dan tiap start berikutnya
+    // ditolak "Rekaman masih berjalan." sampai browser di-restart.
+    chrome.offscreen.closeDocument?.().catch(() => {});
+    broadcastRec();
+    throw e;
+  } finally {
+    startPromise = null;
+  }
+}
+
+async function startRecordingInner({ streamId, meetingId, title, baseTime }) {
+  const stt = await sttConfig();
+  await ensureOffscreen();
+  // error: null eksplisit — panel mempertahankan error/peringatan terakhir
+  // sampai ada yang menghapusnya, dan rekaman BARU adalah satu-satunya
+  // peristiwa yang boleh menghapus keluhan rekaman sebelumnya.
+  broadcastRec({ error: null });
+  // Dicatat begitu rekam mulai, tidak menunggu transkrip: tombol "Unduh audio"
+  // & "Transkrip ulang" cuma hidup di dalam entri Riwayat, jadi tanpa ini
+  // rekaman yang STT-nya gagal total tak terjangkau layar mana pun. Judul ikut
+  // dicatat sekarang — saat transkrip selesai, tab-nya bisa sudah ditutup.
+  // Balasan diperiksa, bukan cuma "tidak reject": side panel yang terbuka juga
+  // sebuah receiving end, jadi sendMessage tetap resolve walau dokumen offscreen
+  // tidak ada — dan panel terbuka adalah keadaan NORMAL (di situ tombol Stop-nya).
+  // Tanpa cek ini rec macet recording:true: badge menyala, start & regenerate
+  // berikutnya ditolak selamanya padahal tidak ada yang merekam.
+  const res = await chrome.runtime.sendMessage({
+    target: 'offscreen', op: 'start', streamId, meetingId, ...stt,
+    chunkMs: 600000, baseTime,
+  }).catch((e) => ({ ok: false, error: e.message }));
+  if (!res?.ok) throw new Error('Offscreen tidak merespons — rekaman tidak dimulai.');
+  // Dicatat SETELAH start dikonfirmasi: start yang gagal tidak boleh membalik
+  // meeting caption yang sudah ada jadi source:'audio' dan menghapus endedAt-nya,
+  // atau meninggalkan entri Riwayat kosong untuk rekaman yang tak pernah terjadi.
+  enqueueWrite(() => ensureMeeting({ meetingId, title, startedAt: baseTime }));
 }
 
 // Transkrip ulang dari audio tersimpan: offscreen yang mengerjakan (bukan SW —
@@ -135,7 +196,7 @@ async function regenerateTranscript(meetingId) {
   // transkrip jalan bersamaan dan meeting yang sama dapat dua audio-transcript.
   rec = { recording: false, transcribing: true, meetingId };
   updateBadge();
-  broadcastRec();
+  broadcastRec({ error: null }); // percobaan baru → keluhan percobaan lama dihapus
   try {
     // Tidak ada cek hasOffscreen() di sini: dokumen offscreen ditutup secara
     // fire-and-forget setelah transkrip selesai, jadi klik di sela penutupan itu
@@ -148,18 +209,14 @@ async function regenerateTranscript(meetingId) {
     if (meta.meetingId !== meetingId) {
       throw new Error('Audio tersimpan milik meeting lain — hanya rekaman terakhir yang disimpan.');
     }
-    const { settings = {} } = await chrome.storage.local.get('settings');
-    const stt = globalThis.MeetStt.sttEndpoint(settings);
+    const stt = await sttConfig();
     await ensureOffscreen();
     // Balasan diperiksa, bukan cuma "tidak reject": side panel yang terbuka
     // juga sebuah receiving end, jadi sendMessage tetap resolve walau offscreen
     // sudah tertutup — dan rec.transcribing macet true tanpa ada yang bekerja.
     // Panel tidak pernah membalas pesan ini, jadi balasan offscreen yang menang.
     const res = await chrome.runtime.sendMessage({
-      target: 'offscreen', op: 'retranscribe', meetingId,
-      baseUrl: stt.baseUrl, apiKey: stt.apiKey,
-      sttModel: settings.sttModel || 'nvidia/parakeet-ctc-1.1b-asr',
-      sttLanguage: settings.sttLanguage || '',
+      target: 'offscreen', op: 'retranscribe', meetingId, ...stt,
     });
     if (!res?.ok) throw new Error(res?.error || 'Offscreen tidak merespons — transkrip ulang tidak dimulai.');
   } catch (e) {
@@ -173,26 +230,59 @@ async function regenerateTranscript(meetingId) {
 }
 
 async function stopRecording() {
+  // Start yang masih jalan ditunggu dulu — lihat komentar di startPromise.
+  if (startPromise) await startPromise.catch(() => {});
   // rec.transcribing → stop kedua (double-click) diblok: cegah transkrip dobel.
   if (rec.transcribing || (!rec.recording && !(await hasOffscreen()))) return;
   rec.recording = false;
   rec.transcribing = true;
   updateBadge();
   broadcastRec();
-  chrome.runtime.sendMessage({ target: 'offscreen', op: 'stop' });
+  // Balasan diperiksa, bukan cuma "tidak reject" — lihat alasannya di
+  // startRecordingInner. Tanpa ini, klik Stop yang mendarat di sela penutupan
+  // dokumen offscreen membuat transcribing macet true SELAMANYA: tak ada
+  // audio-transcript yang akan datang, dan start/stop/regenerate ditolak terus.
+  const res = await chrome.runtime.sendMessage({ target: 'offscreen', op: 'stop' })
+    .catch(() => null);
+  if (res?.ok) return;                 // offscreen mengerjakannya, tunggu audio-transcript
+  if (res?.busy) {                     // transkrip memang jalan — transcribing tetap true
+    broadcastRec({ error: res.error });
+    return;
+  }
+  rec = { recording: false, transcribing: false, meetingId: null };
+  updateBadge();
+  broadcastRec({ error: res?.error ?? 'Offscreen tidak merespons — rekaman dihentikan tanpa transkrip.' });
 }
 
-async function saveAudioTranscript({ meetingId, segments, baseTime }) {
+// Catat meeting tanpa menyentuh segmen: dipakai saat rekaman MULAI, sebelum
+// ada satu pun hasil transkrip.
+async function ensureMeeting({ meetingId, title, startedAt }) {
+  const key = 'meeting:' + meetingId;
+  const data = await chrome.storage.local.get([key, 'meetings']);
+  const meeting = data[key] ?? {
+    id: meetingId, title: title || meetingId, startedAt, endedAt: null, segments: [], mom: null,
+  };
+  meeting.source = 'audio';
+  meeting.endedAt = null; // rekam ulang di ruang Meet yang sama → aktif lagi
+  if (title) meeting.title = title;
+  const meetings = data.meetings ?? [];
+  if (!meetings.includes(meetingId)) meetings.unshift(meetingId);
+  await chrome.storage.local.set({ [key]: meeting, meetings });
+  notifyPanel({ type: 'meeting-updated', id: meetingId });
+}
+
+async function saveAudioTranscript({ meetingId, segments, baseTime, replace, legacy }) {
   const key = 'meeting:' + meetingId;
   const data = await chrome.storage.local.get([key, 'meetings']);
   const meeting = data[key] ?? {
     // startedAt = waktu MULAI rekam, bukan waktu simpan: kalau dipakai waktu
     // simpan, segmen ber-timestamp lebih awal dari "mulai" meeting-nya.
-    id: meetingId, title: (await getRecTitle()) || meetingId, startedAt: baseTime ?? Date.now(),
+    id: meetingId, title: meetingId, startedAt: baseTime ?? Date.now(),
     endedAt: null, segments: [], mom: null,
   };
   meeting.source = 'audio';
-  meeting.segments = globalThis.MeetMerge.replaceAudioSegments(meeting.segments, segments);
+  meeting.segments = globalThis.MeetMerge.replaceAudioSegments(
+    meeting.segments, segments, { baseTime: baseTime ?? 0, replace: !!replace, legacy: !!legacy });
   const meetings = data.meetings ?? [];
   if (!meetings.includes(meetingId)) meetings.unshift(meetingId);
   await chrome.storage.local.set({ [key]: meeting, meetings });
@@ -203,7 +293,9 @@ async function saveSegments({ meetingId, title, segs }) {
   const key = 'meeting:' + meetingId;
   const data = await chrome.storage.local.get([key, 'meetings']);
   const meeting = data[key] ?? {
-    id: meetingId, title, startedAt: Date.now(), endedAt: null, segments: [], mom: null,
+    // title bisa string kosong (content script tak tahu judulnya) — record baru
+    // tetap butuh sesuatu yang bisa ditampilkan.
+    id: meetingId, title: title || meetingId, startedAt: Date.now(), endedAt: null, segments: [], mom: null,
   };
   if (title) meeting.title = title;
   meeting.endedAt = null; // rejoin meeting lama → aktif lagi
@@ -216,16 +308,20 @@ async function saveSegments({ meetingId, title, segs }) {
 }
 
 async function endMeeting(meetingId) {
-  const key = 'meeting:' + meetingId;
-  const data = await chrome.storage.local.get(key);
-  if (!data[key]) return;
-  data[key].endedAt = Date.now();
-  await chrome.storage.local.set({ [key]: data[key] });
+  // Reset `active` DULUAN, sebelum early-return di bawah: meeting yang tak
+  // pernah punya record (tak ada satu pun caption masuk) membuat fungsi ini
+  // keluar lebih awal dan meninggalkan active.id + active.inCall nyangkut
+  // selamanya — badge menyala terus, Live menunjuk ruang yang sudah ditinggal.
   if (active.id === meetingId) {
     active = { id: null, inCall: false, captionsOn: false, lastSegmentAt: 0, captionsOnAt: 0 };
     updateBadge();
     notifyPanel({ type: 'status', ...active });
   }
+  const key = 'meeting:' + meetingId;
+  const data = await chrome.storage.local.get(key);
+  if (!data[key]) return;
+  data[key].endedAt = Date.now();
+  await chrome.storage.local.set({ [key]: data[key] });
   notifyPanel({ type: 'meeting-updated', id: meetingId });
 }
 
@@ -284,27 +380,49 @@ const enqueueWrite = (fn) => {
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'captions') return;
   let meetingId = null;
+  // Port ini pernah benar-benar berada DI DALAM call? Tab yang cuma membuka
+  // halaman ruang (lobby, link kalender yang diklik dua kali) juga melapor tiap
+  // 2 detik dengan meetingId yang sama — tanpa penanda ini, menutup tab itu
+  // menghentikan rekaman dan menutup meeting milik tab lain yang masih rapat.
+  let joined = false;
+  let ended = false;
+  // Satu tempat penutup meeting, dipakai jalur pesan 'ended' MAUPUN onDisconnect.
+  const finish = () => {
+    if (ended || !joined || !meetingId) return;
+    ended = true;
+    // rec.meetingId null = state rekaman hilang karena SW restart, padahal
+    // dokumen offscreen bisa jadi masih merekam. stopRecording punya penjaga
+    // hasOffscreen() sendiri, jadi biarkan ia yang memutuskan.
+    if (!rec.meetingId || rec.meetingId === meetingId) stopRecording();
+    enqueueWrite(() => endMeeting(meetingId));
+  };
   port.onMessage.addListener((msg) => {
     if (msg.type === 'segments') {
       meetingId = msg.meetingId;
       enqueueWrite(() => saveSegments(msg));
+    } else if (msg.type === 'ended') {
+      meetingId = msg.meetingId;
+      if (msg.joined) joined = true;
+      finish();
     } else if (msg.type === 'status') {
       meetingId = msg.meetingId;
-      // Multi-tab: tab yang benar-benar in-call menang; tab lain (lobby/stale)
-      // tidak boleh menimpa status meeting yang sedang berjalan.
-      const canClaim = msg.inCall || active.id === msg.meetingId || !active.inCall || !active.id;
+      if (msg.inCall) joined = true;
+      // Multi-tab: tab yang benar-benar in-call menang. Tab lobby TIDAK boleh
+      // menimpa status meeting yang sedang berjalan — termasuk saat id-nya sama
+      // (dulu `active.id === msg.meetingId` mengizinkannya, dan akibatnya
+      // inCall/captionsOn berkedip tiap 2 detik antara dua tab, yang ikut
+      // mereset captionsOnAt sehingga peringatan "caption nyala tapi tak ada
+      // teks 30 detik" tidak pernah bisa muncul).
+      const canClaim = msg.inCall || !active.inCall || !active.id;
       if (!canClaim) return;
       if (msg.captionsOn && !active.captionsOn) active.captionsOnAt = Date.now();
-      active = { ...active, id: msg.meetingId, inCall: msg.inCall, captionsOn: msg.captionsOn,
-        tabId: port.sender?.tab?.id ?? active.tabId };
+      active = { ...active, id: msg.meetingId, inCall: msg.inCall, captionsOn: msg.captionsOn };
       updateBadge();
       notifyPanel({ type: 'status', ...active });
     }
   });
-  port.onDisconnect.addListener(() => {
-    if (rec.recording && rec.meetingId === meetingId) stopRecording();
-    if (meetingId) enqueueWrite(() => endMeeting(meetingId));
-  });
+  // Tab ditutup / di-reload tanpa sempat mengirim 'ended'. finish() idempotent.
+  port.onDisconnect.addListener(finish);
 });
 
 // Berjalan DI HALAMAN Gemini via executeScript — harus mandiri (di-serialize,
@@ -339,22 +457,25 @@ function injectGeminiPrompt(text) {
 
 function sendToGemini(text) {
   chrome.tabs.create({ url: 'https://gemini.google.com/app' }).then((tab) => {
+    // Satu fungsi pelepas untuk kedua listener: injeksi yang BERHASIL juga harus
+    // melepas onRemoved, kalau tidak tiap kiriman meninggalkan satu closure hidup
+    // sampai tab Gemini-nya ditutup.
+    const done = () => {
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      chrome.tabs.onRemoved.removeListener(gone);
+    };
     const onUpdated = (id, info, t) => {
       if (id !== tab.id || info.status !== 'complete') return;
       // Belum sign-in → redirect ke accounts.google.com juga 'complete': tunggu Gemini asli.
       if (!t.url?.startsWith('https://gemini.google.com/')) return;
-      chrome.tabs.onUpdated.removeListener(onUpdated);
+      done();
       // Gagal inject (SW restart, DOM berubah) → diam: teks sudah di clipboard.
       chrome.scripting.executeScript({ target: { tabId: tab.id }, func: injectGeminiPrompt, args: [text] })
         .catch(() => {});
     };
+    function gone(id) { if (id === tab.id) done(); }
     chrome.tabs.onUpdated.addListener(onUpdated);
-    // Tab ditutup sebelum Gemini sempat load → lepas listener, jangan tinggalkan closure mati.
-    chrome.tabs.onRemoved.addListener(function gone(id) {
-      if (id !== tab.id) return;
-      chrome.tabs.onUpdated.removeListener(onUpdated);
-      chrome.tabs.onRemoved.removeListener(gone);
-    });
+    chrome.tabs.onRemoved.addListener(gone);
   });
 }
 
@@ -374,11 +495,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     stopRecording();
     return false;
   }
-  if (msg.type === 'audio-meta') {
-    globalThis.MeetAudioStore.loadAudioMeta()
-      .then((m) => sendResponse(m), () => sendResponse(null));
-    return true; // sendResponse async
-  }
   if (msg.type === 'regenerate-transcript') {
     regenerateTranscript(msg.id).then(
       () => sendResponse({ ok: true }),
@@ -387,21 +503,31 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.type === 'audio-progress') {
-    broadcastRec({ done: msg.done, total: msg.total });
+    // Pesan ini BUKTI offscreen sedang mentranskrip. Kalau rec bilang idle,
+    // yang salah adalah rec: service worker MV3 mati saat jeda antar potongan
+    // (10 menit audio bisa lewat 30 detik tanpa pesan) lalu dibangunkan lagi
+    // oleh pesan ini dengan state kosong. Tanpa pemulihan ini panel menghapus
+    // "Mentranskrip…" dan menawarkan "Transkrip ulang" yang pasti ditolak.
+    if (!rec.transcribing) {
+      rec = { recording: false, transcribing: true, meetingId: msg.meetingId ?? rec.meetingId };
+      updateBadge();
+    }
+    broadcastRec({ done: msg.done, total: msg.total, note: msg.note });
     return false;
   }
   if (msg.type === 'audio-transcript') {
     rec = { recording: false, transcribing: false, meetingId: null };
     updateBadge();
     if (!msg.segments.length) {
-      // Kosong = STT tidak menghasilkan teks. Tanpa pesan ini user melihat
-      // meeting kosong yang tampak seperti berhasil.
-      // Tidak menyebut "Transkrip ulang": tombolnya hanya muncul kalau audio
-      // benar-benar tersimpan (mis. saveAudio gagal → tak ada tombol). Tombol,
-      // saat ada, sudah berlabel sendiri — biar keberadaannya yang menawarkan.
+      // Kosong = STT tidak menghasilkan teks; tanpa pesan ini user melihat
+      // meeting kosong yang tampak seperti berhasil. Sengaja tidak menyebut
+      // "Transkrip ulang": tombolnya cuma ada kalau audionya memang tersimpan.
       broadcastRec({ error: 'Transkrip kosong — STT tidak menghasilkan teks. Cek endpoint/model STT di Settings.' });
     } else {
-      broadcastRec();
+      // Eksplisit null: panel kini mempertahankan error terakhir sampai ada
+      // yang menghapusnya, dan transkrip yang berhasil adalah kabar baik yang
+      // membatalkan peringatan siklus ini.
+      broadcastRec({ error: null });
     }
     // Meeting TETAP disimpan walau kosong: tombol "Transkrip ulang" hanya ada
     // di dalam view meeting tersimpan, jadi tanpa record ini pesan di atas

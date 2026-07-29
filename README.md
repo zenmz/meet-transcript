@@ -1,130 +1,170 @@
-# Meet Transcript
+# 🎙️ Meet Transcript
 
-Chrome extension (Manifest V3): transkrip Google Meet dari live caption,
-riwayat meeting, download .txt/.md, dan generate MoM via OpenAI.
+<p align="center">
+  <img src="icons/icon128.png" width="112" alt="Meet Transcript">
+</p>
 
-## Install untuk tim — tak perlu Chrome Web Store
+**Ekstensi Chrome untuk Transkripsi Google Meet & Pembuatan Notulen (MoM) Otomatis**
 
-Ekstensi ini dipasang lewat **Load unpacked**. Auto-update TIDAK ada di jalur
-ini — ambil versi baru lalu klik reload. Dua cara mendapatkan filenya:
+---
 
-**Cara 1 — ZIP rilis, paling gampang tanpa git**
+**Meet Transcript** adalah ekstensi Google Chrome yang terintegrasi langsung pada *side panel* Google Meet. Ekstensi ini menangkap transkrip caption secara *real-time* selama rapat berlangsung dan secara otomatis merangkumnya menjadi *Minutes of Meeting* (MoM). Transkrip dari rekaman audio muncul setelah perekaman dihentikan.
 
-1. Buka tab **[Releases](../../releases)** repo → ambil rilis terbaru →
-   download aset **`meet-transcript-vX.Y.Z.zip`** di bagian *Assets*. Ini
-   paket bersih — cuma file ekstensi, tanpa docs/test.
-2. Extract ZIP-nya ke folder tetap. Jangan taruh di Downloads yang sering
-   dibersihkan — kalau foldernya hilang, ekstensinya mati.
-3. `chrome://extensions` → nyalakan **Developer mode** di kanan atas →
-   **Load unpacked** → pilih folder hasil extract yang berisi `manifest.json`.
-4. Pin ikon **Meet Transcript** di toolbar.
-5. Update: download ZIP rilis baru, replace folder, lalu `chrome://extensions`
-   → klik **reload** di kartu ekstensi.
+Seluruh data rapat disimpan secara lokal di peramban (*browser*) Anda. Tanpa server perantara, dan Anda memiliki kendali penuh atas *endpoint* STT (Speech-to-Text) maupun LLM (Large Language Model) yang digunakan — transkripsi bahkan dapat berjalan sepenuhnya luring di dalam Chrome. Baca bagian [Keamanan & Privasi](#-keamanan--privasi) untuk mengetahui persis data apa yang keluar pada tiap mode.
 
-**Cara 2 — git clone, kalau mau `git pull` untuk update**
+## ✨ Fitur Utama
 
-1. `git clone <url-repo>` ke folder tetap.
-2. `chrome://extensions` → **Developer mode** → **Load unpacked** → pilih
-   folder hasil clone.
-3. Update: `git pull` di folder itu, lalu klik **reload** di kartu ekstensi.
+* **Multi-Sumber Transkripsi:** Menggabungkan *caption* bawaan Google Meet (menyertakan nama pembicara) dan rekaman audio *tab* (via STT) dalam satu linimasa rapat, diurutkan menurut waktu.
+* **Dukungan Luring (Offline):** Whisper dapat berjalan di dalam peramban lewat WASM — model diunduh sekali dari Hugging Face, setelah itu transkripsi sepenuhnya luring. Alternatifnya, arahkan ke *server* Whisper pribadi Anda.
+* **Pembuatan MoM Otomatis:** Menghasilkan ringkasan, poin pembahasan, keputusan, dan *action items* menggunakan *endpoint* LLM yang kompatibel dengan OpenAI (misal: `gpt-4o-mini`). *Template* dapat dikustomisasi.
+* **Fleksibilitas Tanpa API Key:** Anda dapat menyalin *prompt* beserta transkrip ke *clipboard*, atau mengirimkannya secara otomatis ke Google Gemini di *tab* baru tanpa memerlukan integrasi API.
+* **Manajemen Riwayat Lokal:** Transkrip, MoM, dan setelan tersimpan di `chrome.storage.local`; potongan audio di IndexedDB. Ekspor riwayat ke `.txt` atau `.md` kapan saja.
+* **Penyelamatan Audio Cerdas:** Potongan audio disimpan ke IndexedDB selama proses perekaman. Jika terjadi kesalahan konfigurasi STT, Anda cukup melakukan "Transkrip ulang" tanpa kehilangan data audio.
+* **Siklus Hidup Otomatis:** Perekaman berhenti otomatis saat rapat selesai (keluar panggilan, pindah ruang, atau *tab* ditutup).
 
-> Peringatan "Developer mode extensions" muncul tiap Chrome start — normal untuk
-> ekstensi yang tidak dari Web Store, aman diabaikan. Jangan klik "Remove".
+---
 
-**Privasi:** ekstensi merekam/menyalin isi meeting dan mengirim transkrip —
-dan audio di mode rekam — ke endpoint STT/LLM yang kamu set di Settings, mis.
-OpenAI / 9Router / Gemini. Isi meeting keluar ke layanan itu — pastikan tim
-sadar dan endpoint-nya sesuai kebijakan data kalian. API key disimpan lokal di
-`chrome.storage.local`, tidak ikut ke repo.
+## 🚀 Panduan Instalasi
 
-## Pakai
+Ekstensi ini berjalan pada **Chrome 116+** dan dipasang melalui mode *Developer*. (Panel samping sendiri sudah ada sejak Chrome 114, tetapi pemulihan status rekaman memakai `chrome.runtime.getContexts` yang baru tersedia di 116.) Tidak memerlukan proses *build* atau instalasi melalui Chrome Web Store.
 
-1. Join Google Meet. Extension mencoba menyalakan CC otomatis; kalau gagal,
-   nyalakan manual (tombol CC di toolbar Meet).
-2. Klik icon extension → side panel: tab **Live** menampilkan transkrip berjalan.
-3. Tab **Settings**: isi OpenAI API key, model (default `gpt-4o-mini`), dan
-   template MoM (`{{transcript}}` diganti isi transkrip).
-4. Tombol **Generate MoM** membuat MoM dari transkrip; hasil ikut di unduhan .md.
-5. Tab **Riwayat**: semua meeting tersimpan lokal (`chrome.storage.local`),
-   bisa dibuka/di-download lagi.
+### Metode 1: Melalui Rilis ZIP (Direkomendasikan)
 
-## Mode transkrip audio (tanpa caption)
+1. Buka halaman **[Releases](../../releases)** dan unduh aset `meet-transcript-vX.Y.Z.zip` terbaru. *(Paket ini bersih — hanya fail ekstensi, tanpa docs/test. ZIP-nya ±5 MB dan mengembang jadi ±22 MB setelah diekstrak; sebagian besar adalah runtime WASM untuk mode Whisper di Browser.)*
+2. Ekstrak fail ZIP ke direktori permanen di komputer Anda (hindari folder *Downloads*).
+3. Buka URL `chrome://extensions` di Google Chrome.
+4. Aktifkan **Developer mode** (sakelar di sudut kanan atas).
+5. Klik **Load unpacked**, lalu pilih folder **`meet-transcript`** di dalam hasil ekstraksi — folder yang isinya langsung `manifest.json`, bukan folder pembungkusnya.
+6. Sematkan (*pin*) ikon Meet Transcript di *toolbar* Anda.
 
-Alternatif bila tak ingin menyalakan caption Meet: rekam audio tab lalu
-transkrip via STT.
+> **Untuk Update:** Unduh ZIP versi terbaru, timpa (*replace*) fail di folder lama, lalu klik ikon **Reload** (🔄) pada kartu ekstensi di halaman konfigurasi.
 
-1. Settings → **Sumber transkrip** = **Rekam audio**. Isi **Model STT**
-   (mis. `nvidia/parakeet-ctc-1.1b-asr`) dan **Bahasa STT** (mis. `id`).
-   Base URL & API key sama dengan MoM.
-2. Join Meet → **klik kanan di halaman Meet** → **Rekam audio meeting**
-   (audio meeting tetap terdengar). Mulai rekam TIDAK bisa dari tombol side
-   panel: `tabCapture` butuh invocation `activeTab` yang hanya diberikan klik
-   context menu, bukan klik di side panel.
-3. **Stop rekam** (dari panel, atau klik kanan → **Stop rekam audio**) → audio
-   ditranskrip per potongan → transkrip muncul (teks + waktu, tanpa nama
-   pembicara).
+### Metode 2: Melalui Git Clone (Untuk Developer)
 
-Catatan: transkrip baru muncul setelah Stop (bukan live). Hanya audio tab
-(peserta) yang direkam, mic sendiri tidak.
+```bash
+git clone https://github.com/zenmz/meet-transcript.git
+```
 
-**Transkrip ulang**: audio rekaman TERAKHIR disimpan (bukan di storage
-transkrip — terpisah, dan tertimpa saat rekaman berikutnya di-*stop*, bukan
-saat dimulai). Kalau
-endpoint/model STT di Settings salah, perbaiki lalu klik **Transkrip ulang**
-di meeting itu — tidak perlu merekam ulang. Karena hanya rekaman terakhir
-yang disimpan, tombol ini hanya muncul untuk meeting dari rekaman terakhir.
+Buka `chrome://extensions` → **Load unpacked** → pilih folder hasil *clone*. Untuk memperbarui ekstensi, jalankan perintah `git pull`, lalu klik **Reload**.
 
-**STT Base URL terpisah**: di Settings, dropdown **Mode STT** memilih dari mana
-transkrip audio diambil:
+> [!NOTE]
+> Peringatan "Disable developer mode extensions" yang muncul saat Chrome dijalankan adalah perilaku normal untuk ekstensi di luar Web Store. Anda dapat mengabaikannya. Jangan klik "Remove".
 
-- *Ikut endpoint chat di atas* — default, pakai Base URL + API key yang sama
-  dengan MoM.
-- *Whisper lokal* — mengisi `http://localhost:8080/v1`; ubah kalau server
-  whisper-mu di port lain. Biarkan STT API key kosong (server lokal tanpa auth).
-- *STT API terpisah (9Router / OpenAI)* — ketik URL endpoint sendiri dan isi
-  STT API key-nya.
+---
 
-Dropdown hanya mengisikan dua field di bawahnya; yang benar-benar dipakai
-adalah **STT Base URL** dan **STT API key**, jadi URL boleh diedit bebas
-setelah memilih mode. Mode dihitung ulang dari URL saat Settings dibuka.
-STT API key kosong = request dikirim tanpa header `Authorization`; API key chat
-sengaja tidak ikut ke host STT lain.
+## 📖 Penggunaan Dasar (Quick Start)
 
-## Tanpa API key: copy prompt atau kirim ke Gemini
+1. **Mulai Rapat:** Bergabunglah ke Google Meet. Ekstensi akan mencoba mengaktifkan *Closed Captions* (CC) secara otomatis. Jika gagal, aktifkan manual melalui *toolbar* Meet.
+2. **Buka Panel:** Klik ikon ekstensi untuk membuka *side panel*. *Tab* **Live** akan mulai terisi secara otomatis.
+3. **Rekam Audio (Opsional):** Klik kanan pada area mana saja di halaman Meet, lalu pilih **Rekam audio meeting**.
+4. **Hasilkan MoM:** Setelah rapat selesai, buka *tab* **Riwayat** → pilih rapat → klik **Generate MoM**. Tombol **Unduh .txt** dan **Unduh .md** berada di dalam menu **Lainnya**.
 
-Alternatif kalau tak mau isi API key OpenAI, dari tab Riwayat/Live:
+**Konfigurasi Awal (Settings):**
+Sebelum penggunaan pertama, isi menu *Settings*: masukkan API Key LLM, pilih Model, dan sesuaikan *Template* MoM (gunakan variabel `{{transcript}}`). Blok **Mode STT** baru muncul setelah **Sumber transkrip** diubah ke *Rekam audio*. Gunakan tombol **Tes koneksi** untuk memvalidasi konfigurasi Anda.
 
-- **Copy Prompt+Transkrip**: salin prompt MoM lengkap (template + transkrip)
-  ke clipboard — paste ke ChatGPT/Gemini/AI web lain manual.
-- **Kirim ke Gemini**: buka tab gemini.google.com, isi kotak chat dengan
-  prompt, lalu kirim otomatis (butuh sudah login Google). Prompt tetap
-  disalin ke clipboard duluan sebagai fallback — kalau auto-isi gagal (mis.
-  DOM Gemini berubah), tinggal paste manual di kotak chat yang sudah terbuka.
+---
 
-## Batasan v1
+## 🎙️ Perekaman Audio & Mode STT
 
-- Transkrip bersumber dari caption Meet — caption harus nyala, akurasi ikut Google.
-- Satu meeting aktif pada satu waktu.
-- Meeting dianggap berakhir saat tab Meet ditutup/pindah halaman.
+Anda dapat merekam audio *tab* untuk ditranskripsi via STT, baik secara mandiri maupun bersamaan dengan fitur *caption* bawaan Meet.
 
-## Troubleshooting
+### Cara Merekam Audio
 
-**Transkrip berhenti terisi padahal caption jalan** → Google mengubah DOM Meet.
-Semua selector ada di `content/selectors.js`; inspect element caption dan
-sesuaikan. Panel menampilkan peringatan bila caption nyala tapi tidak ada teks
-masuk 30 detik.
+1. Buka menu **Settings** → set **Sumber transkrip** = *Rekam audio* agar blok **Mode STT** terlihat → konfigurasikan **Mode STT**. (Setelah dikonfigurasi, perekaman tetap bisa dipakai sambil *Sumber transkrip* dikembalikan ke *Caption Meet* — mode STT yang tersimpan tetap dipakai.)
+2. Di dalam panggilan Meet, **klik kanan** pada halaman → pilih **Rekam audio meeting**.
+3. Perekaman akan berhenti otomatis jika Anda keluar dari panggilan. Anda juga dapat menghentikannya secara manual via panel atau menu klik kanan.
 
-## Test
+**Catatan Penting:**
+
+* Karena batasan kebijakan keamanan Chrome, inisiasi perekaman (`tabCapture`) hanya dapat dipicu melalui klik *context menu* (klik kanan), bukan dari tombol di *side panel*.
+* Hanya suara dari peserta lain (*tab audio*) yang direkam. Suara dari mikrofon Anda sendiri tidak akan masuk ke dalam rekaman audio ini.
+* Setiap 10 menit, potongan audio disimpan ke IndexedDB untuk mencegah kehilangan data jika peramban tertutup mendadak. Potongan tersebut dapat diunduh kapan saja melalui tombol **Unduh audio** sebagai fail `.webm` terpisah (membutuhkan izin *"Download multiple files"* pada Chrome bila lebih dari satu potongan).
+* Hanya audio dari rekaman **terakhir** yang disimpan. Jika Anda memulai perekaman baru, data audio sebelumnya akan dihapus.
+
+### Pilihan Mode STT (Speech-to-Text)
+
+| Mode (label di UI) | Kebutuhan | Audio dikirim ke | Deskripsi |
+| --- | --- | --- | --- |
+| **Whisper lokal (server sendiri)** | Server Whisper OpenAI-compatible | URL yang **Anda** isi | **[Default]** Terisi `http://localhost:8080/v1` |
+| **Whisper di browser (offline, tanpa server)** | — | 🔒 Tidak ke mana pun | Paling privat, paling lambat. Bahasa dikunci ke Indonesia. |
+| **9Router / STT API** | URL + API Key (**wajib diisi**) | 🌐 Endpoint tersebut | Tercepat. Menyediakan opsi Model & Bahasa STT. |
+
+> [!WARNING]
+> Pada mode **9Router / STT API**, kalau **STT Base URL** dibiarkan kosong, ekstensi jatuh ke *Base URL* LLM Anda dan memakai **API key LLM** — audio rapat akan dikirim ke endpoint chat (default `https://api.openai.com/v1`). Isi STT Base URL secara eksplisit.
+
+### Detail Mode "Whisper di Browser"
+
+Mode ini menggunakan teknologi WebAssembly (WASM) untuk menjalankan model AI murni pada CPU komputer Anda. Model diunduh satu kali dari Hugging Face dan disimpan dalam *cache* peramban.
+
+| Model | Ukuran Unduhan | Akurasi (Bahasa Indonesia) | Kecepatan |
+| --- | --- | --- | --- |
+| `whisper-tiny` | ±40 MB | Rendah | Sangat Cepat |
+| `whisper-base` | ±80 MB | Rendah–Menengah (sering salah dengar) | Cepat (Default) |
+| `whisper-small` | ±250 MB | Tinggi | Lambat |
+
+> *Saran: Jika transkripsi berbahasa Indonesia kurang akurat, tingkatkan model ke `whisper-small` melalui pengaturan sebelum memeriksa komponen lainnya.*
+
+---
+
+## 🔒 Keamanan & Privasi
+
+Ekstensi ini dirancang dengan pendekatan *privacy-first*:
+
+* **Penyimpanan Lokal:** API Key Anda disimpan secara eksklusif di `chrome.storage.local` perangkat Anda dan tidak pernah dikomit ke repositori. Tidak ada telemetri maupun analitik di dalam ekstensi ini.
+* **Whisper di Browser:** satu-satunya mode yang benar-benar tidak mengirim audio ke mana pun — modelnya berjalan di dalam Chrome. Satu-satunya lalu lintas keluar adalah unduhan model dari Hugging Face, sekali saja.
+* **Whisper Lokal:** audio dikirim ke URL yang **Anda sendiri** isi di *STT Base URL* (default `http://localhost:8080/v1`). Ekstensi **tidak** memaksa URL itu benar-benar lokal — pastikan isinya memang server Anda. Bila *STT API key* pernah diisi, nilainya tetap ikut sebagai header `Authorization` walaupun field-nya tersembunyi di mode ini.
+* **Transparansi Endpoint:** MoM dihasilkan melalui *endpoint* pilihan Anda. Pastikan *endpoint* yang Anda konfigurasikan sesuai dengan kebijakan keamanan data perusahaan atau tim Anda.
+* **Copy Prompt / Kirim ke Gemini:** kedua tombol ini menyalin **seluruh transkrip** ke clipboard, dan tombol Gemini menempelkannya ke `gemini.google.com` — artinya seluruh isi rapat masuk ke akun Google Anda. Jangan gunakan untuk rapat yang isinya tidak boleh keluar.
+
+---
+
+## 🛠️ Pemecahan Masalah (Troubleshooting)
+
+* **Transkrip tidak muncul meskipun *caption* menyala:** Google mungkin telah memperbarui struktur DOM Meet. Ekstensi akan menampilkan peringatan jika *caption* aktif namun teks tidak terbaca selama 30 detik. (Bagi *developer*, perbarui penyeleksi pada `content/selectors.js`).
+* **Tab Live menunjuk rapat lama, atau perekaman tidak berhenti sendiri:** Google Meet adalah aplikasi SPA — pindah ruang dan keluar panggilan hanya mengganti URL pada dokumen yang sama. Pelacakan sesi ditangani `content/session.js` (murni, diuji pada `test/session.test.mjs`).
+* **Transkrip audio kosong:** Periksa URL *endpoint* atau model STT di pengaturan Anda. Setelah diperbaiki, klik **Transkrip ulang** pada riwayat rapat terkait (audio asli masih tersimpan).
+* **Peringatan "Belum ada suara masuk":** Sistem hanya menangkap suara dari peserta lain. Jika tidak ada orang lain yang berbicara, maka tidak ada audio yang diproses.
+* **Log Eror:** Jika terjadi kesalahan pada *side panel*, pesan *error* dan *stack trace* dapat disorot dan disalin langsung dari antarmuka panel.
+
+---
+
+## 💻 Pengembangan (Development)
+
+Proyek ini dibangun tanpa *build step* yang kompleks (tanpa `npm install`), menggunakan JavaScript *vanilla* (Manifest V3) yang dioptimalkan.
+
+**Struktur Direktori:**
+
+* `background/` : *Service worker*, manajemen status, penyimpanan, dan siklus hidup.
+* `content/` : Logika injeksi DOM Meet (`selectors.js`, `session.js`, `captions.js`).
+* `panel/` : Antarmuka pengguna (*Live*, *Riwayat*, *Settings*).
+* `offscreen/` : Modul perekaman audio *tab* dan orkestrasi STT (service worker MV3 bisa mati di tengah unggahan panjang).
+* `lib/` : Utilitas inti (`openai.js`, `stt.js`, `audiostore.js`/IndexedDB, `merge.js`), plus `whisper-browser.js` dan `vendor/` — transformers.js + ONNX Runtime WASM (±22 MB), mesin STT mode browser.
+* `test/` · `scripts/` · `icons/` · `docs/` : pengujian Node, skrip rilis, ikon, dan catatan desain internal.
+
+**Menjalankan Pengujian (Testing):**
 
 ```bash
 node --test test/*.test.mjs
 ```
 
-## Rilis versi baru (maintainer)
+**Membuat Rilis (Khusus Maintainer):**
 
-1. Naikkan `"version"` di `manifest.json`, commit, `git push`.
-2. `./scripts/pack.sh --release` — build ZIP bersih ke `dist/` lalu bikin
-   GitHub Release ber-tag `vX.Y.Z` dengan ZIP-nya sebagai aset.
+Membutuhkan `node` (skrip membaca versi dari `manifest.json`) dan `gh` CLI yang sudah login.
 
-`./scripts/pack.sh` tanpa argumen cuma build ZIP-nya (tak publish). `dist/`
-di-gitignore.
+1. Perbarui `"version"` di dalam `manifest.json`.
+2. Lakukan *commit* dan `git push`.
+3. Jalankan skrip rilis:
+
+```bash
+./scripts/pack.sh --release
+```
+
+*(Skrip ini akan membangun fail ZIP yang bersih pada direktori `dist/` dan memublikasikannya secara otomatis ke GitHub Releases).*
+
+---
+
+## 📄 Lisensi
+
+[MIT](LICENSE) © zenmz
+
+Ekstensi ini ikut mendistribusikan Transformers.js (Apache-2.0) dan ONNX Runtime Web (MIT) di dalam `lib/vendor/` untuk mode *Whisper di browser*. Rinciannya di [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -76,8 +76,19 @@
     ]);
   }
 
+  // String KOSONG = "tidak tahu, jangan ubah judul yang sudah tersimpan".
+  // Jangan pernah mengarang judul dari location.pathname: script ini jalan di
+  // seluruh meet.google.com, dan saat pindah ruang / keluar call pathname sudah
+  // menunjuk ruang BERIKUTNYA (atau /landing) sementara flush terakhir masih
+  // milik ruang sebelumnya — saveSegments akan menimpa judul aslinya dengan
+  // kode ruang lain. Trailing " - Google Meet" ikut dibuang supaya cocok dengan
+  // titleFromTab di service worker (dua jalur, satu bentuk judul).
   function meetingTitle() {
-    return document.title.replace(/^Meet\s*[-–]\s*/, '').trim() || location.pathname.slice(1);
+    const t = document.title
+      .replace(/^Meet\s*[-–—]\s*/, '')
+      .replace(/\s*[-–—]\s*Google Meet\s*$/, '')
+      .trim();
+    return t && t !== 'Meet' ? t : '';
   }
 
   globalThis.MeetSelectors = {

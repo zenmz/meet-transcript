@@ -25,34 +25,82 @@ test('upsertSegment update in-place untuk id yang sama, tidak duplikat', () => {
   assert.equal(segs[1].text, 'hai');
 });
 
-test('replaceAudioSegments mengisi meeting kosong dan memberi id berurutan', () => {
-  const out = replaceAudioSegments([], [audio(0, 'halo'), audio(1000, 'hai')]);
-  assert.deepEqual(out.map((s) => s.id), ['audio:0', 'audio:1']);
+test('replaceAudioSegments mengisi meeting kosong dan memberi id bercap baseTime', () => {
+  const out = replaceAudioSegments([], [audio(0, 'halo'), audio(1000, 'hai')], { baseTime: 100 });
+  assert.deepEqual(out.map((s) => s.id), ['audio:100:0', 'audio:100:1']);
   assert.deepEqual(out.map((s) => s.text), ['halo', 'hai']);
 });
 
-test('replaceAudioSegments transkrip ulang MENGGANTI, bukan menumpuk', () => {
-  const first = replaceAudioSegments([], [audio(0, '[transkrip gagal]'), audio(1000, '[transkrip gagal]')]);
-  const second = replaceAudioSegments(first, [audio(0, 'halo'), audio(1000, 'hai')]);
+test('transkrip ulang (replace) MENGGANTI grup rekaman yang sama, bukan menumpuk', () => {
+  const opt = { baseTime: 100, replace: true };
+  const first = replaceAudioSegments([], [audio(0, '[transkrip gagal]'), audio(1000, '[transkrip gagal]')], opt);
+  const second = replaceAudioSegments(first, [audio(0, 'halo'), audio(1000, 'hai')], opt);
   assert.equal(second.length, 2);
   assert.deepEqual(second.map((s) => s.text), ['halo', 'hai']);
 });
 
+// Bug yang paling mahal: rekaman KEDUA di ruang Meet yang sama dulu menghapus
+// transkrip rekaman pertama, dan audionya sudah ikut hilang (beginAudio clear).
+test('rekaman BARU di ruang yang sama menambah, tidak menghapus rekaman sebelumnya', () => {
+  const first = replaceAudioSegments([], [audio(0, 'sesi satu')], { baseTime: 100 });
+  const second = replaceAudioSegments(first, [audio(9000, 'sesi dua')], { baseTime: 9000 });
+  assert.deepEqual(second.map((s) => s.text), ['sesi satu', 'sesi dua']);
+  assert.deepEqual(second.map((s) => s.id), ['audio:100:0', 'audio:9000:0']);
+});
+
+// Id lama tanpa cap baseTime hanya boleh dibuang kalau audio yang sedang
+// ditranskrip ulang MEMANG rekaman legacy itu sendiri (loadAudio yang tahu).
+test('id lama tanpa cap dibuang hanya saat transkrip ulang rekaman legacy', () => {
+  const lama = [{ id: 'audio:0', speaker: '', text: 'lama', t: 0 }];
+  const tambah = replaceAudioSegments(lama, [audio(1000, 'baru')], { baseTime: 500 });
+  assert.deepEqual(tambah.map((s) => s.text), ['lama', 'baru'], 'rekaman baru menambah');
+  const ulangLegacy = replaceAudioSegments(lama, [audio(1000, 'baru')],
+    { baseTime: 500, replace: true, legacy: true });
+  assert.deepEqual(ulangLegacy.map((s) => s.text), ['baru'], 'transkrip ulang legacy mengganti');
+});
+
+// Regresi mahal: rekam sebelum upgrade (id lama) → upgrade → rekam lagi di ruang
+// sama → transkrip ulang rekaman KEDUA tidak boleh menyentuh rekaman pertama,
+// yang audionya sudah lama dibuang beginAudio dan tak bisa dipulihkan.
+test('transkrip ulang rekaman bercap TIDAK menghapus rekaman legacy milik lain', () => {
+  const lama = [{ id: 'audio:0', speaker: '', text: 'rekaman lama', t: 0 }];
+  const dua = replaceAudioSegments(lama, [audio(9000, 'rekaman baru')], { baseTime: 9000 });
+  const ulang = replaceAudioSegments(dua, [audio(9000, 'baru diperbaiki')],
+    { baseTime: 9000, replace: true, legacy: false });
+  assert.deepEqual(ulang.map((s) => s.text), ['rekaman lama', 'baru diperbaiki']);
+});
+
 test('replaceAudioSegments mempertahankan segmen dari caption', () => {
   const withCaption = [{ id: 'cap-1', speaker: 'Ani', text: 'halo', t: 0 }];
-  const out = replaceAudioSegments(replaceAudioSegments(withCaption, [audio(5, 'a')]), [audio(5, 'b')]);
+  const opt = { baseTime: 1, replace: true };
+  const out = replaceAudioSegments(replaceAudioSegments(withCaption, [audio(5, 'a')], opt), [audio(5, 'b')], opt);
   assert.equal(out.length, 2);
   assert.equal(out[0].id, 'cap-1');
   assert.equal(out[1].text, 'b');
 });
 
+// Caption disimpan lebih dulu di array, baris audio di-concat di belakangnya —
+// tanpa urut ulang, transkrip gabungan melompat mundur di tengah.
+test('replaceAudioSegments mengurutkan gabungan caption+audio per waktu', () => {
+  const caption = [
+    { id: 'cap-1', speaker: 'Ani', text: 'pembuka', t: 1000 },
+    { id: 'cap-2', speaker: 'Budi', text: 'penutup', t: 9000 },
+  ];
+  const out = replaceAudioSegments(caption, [audio(3000, 'tengah'), audio(12000, 'setelah')], { baseTime: 7 });
+  assert.deepEqual(out.map((s) => s.text), ['pembuka', 'tengah', 'penutup', 'setelah']);
+  assert.deepEqual(out.map((s) => s.t), [1000, 3000, 9000, 12000]);
+  // id audio tetap berurut sesuai hasil STT, bukan sesuai posisi akhir.
+  assert.deepEqual(out.filter((s) => s.id.startsWith('audio:')).map((s) => s.id), ['audio:7:0', 'audio:7:1']);
+});
+
 // Transkrip ulang dengan model STT yang balas 200 + teks kosong menghasilkan
 // nol segmen; transkrip lama yang sudah bagus tidak boleh ikut hilang.
 test('replaceAudioSegments dengan hasil kosong TIDAK menghapus transkrip lama', () => {
+  const opt = { baseTime: 100, replace: true };
   const first = replaceAudioSegments([{ id: 'cap-1', text: 'x', speaker: 'Ani', t: 0 }],
-    [audio(0, 'halo'), audio(1000, 'hai')]);
-  const out = replaceAudioSegments(first, []);
-  assert.deepEqual(out.map((s) => s.id), ['cap-1', 'audio:0', 'audio:1']);
+    [audio(0, 'halo'), audio(1000, 'hai')], opt);
+  const out = replaceAudioSegments(first, [], opt);
+  assert.deepEqual(out.map((s) => s.id), ['cap-1', 'audio:100:0', 'audio:100:1']);
   assert.deepEqual(out.map((s) => s.text), ['x', 'halo', 'hai']);
 });
 

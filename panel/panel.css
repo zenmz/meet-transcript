@@ -12,8 +12,16 @@ h3 { font-size: 13px; margin: 12px 0 4px; }
 .seg .who { font-weight: 600; }
 .seg .time { color: #888; font-size: 11px; margin-left: 4px; }
 .warn { background: #fef7e0; border: 1px solid #f9ab00; padding: 8px; border-radius: 6px; margin-bottom: 8px; }
+.info { background: #e8f0fe; border: 1px solid #1a73e8; color: #174ea6; padding: 8px; border-radius: 6px; margin: 6px 0; }
 .error { background: #fce8e6; border: 1px solid #d93025; padding: 8px; border-radius: 6px; margin-bottom: 8px; }
+/* Stack trace panjang & tak bisa dipatah di spasi — tanpa ini kotaknya melebar
+   dan sebagian pesan keluar dari panel yang cuma ~350px. */
+#crash { white-space: pre-wrap; word-break: break-word; user-select: text; font-size: 11px; max-height: 40vh; overflow: auto; margin: 0; }
 .actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
+/* Disclosure "Lainnya": dibuat mirip tautan, bukan tombol, supaya tidak ikut
+   bersaing dengan tombol aksi yang justru mau ditonjolkan. */
+details.more > summary { cursor: pointer; color: #1a73e8; font-size: 12px; width: fit-content; }
+details.more > .actions { margin: 4px 0 8px; }
 button { padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; background: #fff; cursor: pointer; font: inherit; }
 button:disabled { opacity: .5; }
 .item { display: block; width: 100%; text-align: left; margin-bottom: 6px; padding: 8px; }
