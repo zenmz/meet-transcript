@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Meet Transcript",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Transkrip Google Meet dari caption dan rekaman audio (STT lokal/offline), lalu jadi Minutes of Meeting.",
   "minimum_chrome_version": "116",
   "permissions": ["sidePanel", "storage", "unlimitedStorage", "tabCapture", "offscreen", "activeTab", "contextMenus", "scripting"],
