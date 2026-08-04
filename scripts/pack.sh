@@ -40,19 +40,20 @@ FVER="$(node -p "require('./manifest.firefox.json').version")"
 
 mkdir -p "$ROOT/dist"
 
-# stage <chrome|firefox> → cetak path staging. Pemanggil yang membereskan.
+# stage <chrome|firefox> — isi $STAGE_DIR. Global, bukan echo/capture: subshell
+# $(...) tidak mewarisi errexit (bash 3.2 macOS), jadi cp yang gagal di dalam
+# capture tertelan dan zip cacat lolos. Dipanggil polos begini, set -e bekerja.
 stage() {
-  local flavor="$1" dir
-  dir="$(mktemp -d)/$NAME"
-  mkdir -p "$dir"
-  for it in "${ITEMS[@]}"; do cp -R "$it" "$dir/"; done
-  find "$dir" -name '.DS_Store' -delete
+  local flavor="$1"
+  STAGE_DIR="$(mktemp -d)/$NAME"
+  mkdir -p "$STAGE_DIR"
+  for it in "${ITEMS[@]}"; do cp -R "$it" "$STAGE_DIR/"; done
+  find "$STAGE_DIR" -name '.DS_Store' -delete
   if [ "$flavor" = firefox ]; then
     # Firefox caption-only: offscreen (tabCapture) tidak ikut, manifest diganti.
-    rm -rf "$dir/offscreen"
-    cp manifest.firefox.json "$dir/manifest.json"
+    rm -rf "$STAGE_DIR/offscreen"
+    cp manifest.firefox.json "$STAGE_DIR/manifest.json"
   fi
-  echo "$dir"
 }
 
 # zip_stage <stagedir> <zippath> — zip lalu hapus staging.
@@ -64,26 +65,26 @@ zip_stage() {
   echo "pack: $out"
 }
 
-build_chrome() { zip_stage "$(stage chrome)" "$ROOT/dist/${NAME}-v${VER}.zip"; }
+build_chrome() { stage chrome; zip_stage "$STAGE_DIR" "$ROOT/dist/${NAME}-v${VER}.zip"; }
 
 # Lint dulu, baru zip: zip Firefox yang gagal lint tidak boleh pernah lahir.
 build_firefox() {
-  local dir; dir="$(stage firefox)"
-  npx --yes web-ext lint --source-dir "$dir" \
-    || { rm -rf "$(dirname "$dir")"; echo "pack: web-ext lint gagal" >&2; exit 1; }
-  zip_stage "$dir" "$ROOT/dist/${NAME}-firefox-v${VER}.zip"
+  stage firefox
+  npx --yes web-ext lint --source-dir "$STAGE_DIR" \
+    || { rm -rf "$(dirname "$STAGE_DIR")"; echo "pack: web-ext lint gagal" >&2; exit 1; }
+  zip_stage "$STAGE_DIR" "$ROOT/dist/${NAME}-firefox-v${VER}.zip"
 }
 
 # Sign AMO unlisted → dist/*.xpi. Kredensial dari env — tidak pernah masuk repo.
 sign_firefox() {
   : "${AMO_JWT_ISSUER:?pack: set AMO_JWT_ISSUER — addons.mozilla.org → Tools → Manage API Keys}"
   : "${AMO_JWT_SECRET:?pack: set AMO_JWT_SECRET}"
-  local dir; dir="$(stage firefox)"
-  npx --yes web-ext sign --channel=unlisted --source-dir "$dir" \
+  stage firefox
+  npx --yes web-ext sign --channel=unlisted --source-dir "$STAGE_DIR" \
     --api-key "$AMO_JWT_ISSUER" --api-secret "$AMO_JWT_SECRET" \
     --artifacts-dir "$ROOT/dist" \
-    || { rm -rf "$(dirname "$dir")"; echo "pack: web-ext sign gagal" >&2; exit 1; }
-  rm -rf "$(dirname "$dir")"
+    || { rm -rf "$(dirname "$STAGE_DIR")"; echo "pack: web-ext sign gagal" >&2; exit 1; }
+  rm -rf "$(dirname "$STAGE_DIR")"
   XPI="$(ls -t "$ROOT"/dist/*.xpi | head -1)"
   echo "pack: $XPI"
 }
