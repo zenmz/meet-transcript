@@ -1,7 +1,17 @@
 // background/service-worker.js
-importScripts('/lib/merge.js', '/lib/openai.js', '/lib/stt.js', '/lib/audiostore.js');
+// Firefox: bukan service worker — script lain dimuat lewat background.scripts
+// di manifest.firefox.json (urutannya harus sama dengan daftar ini).
+if (typeof importScripts === 'function') {
+  importScripts('/lib/merge.js', '/lib/openai.js', '/lib/stt.js', '/lib/audiostore.js');
+}
 
-chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+chrome.sidePanel?.setPanelBehavior({ openPanelOnActionClick: true });
+// Firefox: tidak ada sidePanel — klik ikon toolbar men-toggle sidebar. toggle()
+// wajib dipanggil sinkron di dalam handler (butuh user gesture). Di Chrome
+// listener ini tidak didaftarkan; klik ikon sudah ditangani setPanelBehavior.
+if (chrome.sidebarAction) {
+  chrome.action.onClicked.addListener(() => chrome.sidebarAction.toggle());
+}
 
 // Status meeting aktif. Hilang saat SW idle-restart — dipulihkan oleh pesan
 // status content script (tiap 2 detik) begitu SW bangun lagi.
@@ -43,6 +53,10 @@ function broadcastRec(extra = {}) {
 // Chrome mana pun, sementara diam-diam mengembalikan false di 114–115 justru
 // membuat stopRecording menyerah tanpa memfinalisasi rekaman.
 async function hasOffscreen() {
+  // Firefox tidak punya getContexts MAUPUN offscreen. Guard di sini, bukan di
+  // pemanggil: stopRecording tetap dipanggil dari finish() tiap meeting usai,
+  // dan tanpa guard ini tiap penutupan meeting melempar unhandled rejection.
+  if (!chrome.runtime.getContexts) return false;
   const c = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] }).catch(() => []);
   return c.length > 0;
 }
@@ -69,48 +83,52 @@ function meetingIdFromUrl(url) {
   }
 }
 
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({ id: 'rec-start', title: 'Rekam audio meeting',
-      contexts: ['page'], documentUrlPatterns: ['https://meet.google.com/*'] });
-    chrome.contextMenus.create({ id: 'rec-stop', title: 'Stop rekam audio',
-      contexts: ['page'], documentUrlPatterns: ['https://meet.google.com/*'] });
+// Rekam audio butuh tabCapture — tidak ada di Firefox, jadi menu klik-kanan
+// dan seluruh jalur start-nya tidak didaftarkan sama sekali di sana.
+if (chrome.tabCapture) {
+  chrome.runtime.onInstalled.addListener(() => {
+    chrome.contextMenus.removeAll(() => {
+      chrome.contextMenus.create({ id: 'rec-start', title: 'Rekam audio meeting',
+        contexts: ['page'], documentUrlPatterns: ['https://meet.google.com/*'] });
+      chrome.contextMenus.create({ id: 'rec-stop', title: 'Stop rekam audio',
+        contexts: ['page'], documentUrlPatterns: ['https://meet.google.com/*'] });
+    });
   });
-});
 
-chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (info.menuItemId === 'rec-start') {
-    // Cek sebelum getMediaStreamId: klik saat sudah merekam tak boleh masuk
-    // catch (yang akan reset state palsu padahal rekaman jalan terus).
-    if (rec.recording || rec.transcribing || await hasOffscreen()) {
-      broadcastRec({ error: 'Rekaman masih berjalan.' });
-      return;
+  chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+    if (info.menuItemId === 'rec-start') {
+      // Cek sebelum getMediaStreamId: klik saat sudah merekam tak boleh masuk
+      // catch (yang akan reset state palsu padahal rekaman jalan terus).
+      if (rec.recording || rec.transcribing || await hasOffscreen()) {
+        broadcastRec({ error: 'Rekaman masih berjalan.' });
+        return;
+      }
+      // HANYA dari URL tab yang diklik — tanpa fallback ke active.id. tabCapture
+      // merekam TAB INI; kalau ini bukan halaman ruang, yang terekam adalah
+      // halaman landing yang sunyi, sementara meeting sungguhan di tab lain yang
+      // kena akibatnya: source-nya dibalik jadi audio, endedAt dihapus, dan
+      // audio tersimpannya dibuang oleh beginAudio.
+      const meetingId = meetingIdFromUrl(tab?.url);
+      if (!meetingId) {
+        broadcastRec({ error: 'Buka halaman ruang Meet-nya dulu — rekaman mengambil audio tab ini.' });
+        return;
+      }
+      try {
+        const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
+        await startRecording({ streamId, meetingId, title: titleFromTab(tab?.title, meetingId) });
+      } catch (e) {
+        // TIDAK mereset rec di sini: klik kedua yang ditolak karena rekaman
+        // pertama sedang jalan juga mendarat di sini, dan resetnya akan mematikan
+        // status rekaman yang sehat (badge padam, tombol Stop hilang, dan saat
+        // meeting selesai onDisconnect melihat recording:false sehingga rekaman
+        // tak pernah difinalisasi). startRecording yang mereset miliknya sendiri.
+        broadcastRec({ error: e.message });
+      }
+    } else if (info.menuItemId === 'rec-stop') {
+      stopRecording();
     }
-    // HANYA dari URL tab yang diklik — tanpa fallback ke active.id. tabCapture
-    // merekam TAB INI; kalau ini bukan halaman ruang, yang terekam adalah
-    // halaman landing yang sunyi, sementara meeting sungguhan di tab lain yang
-    // kena akibatnya: source-nya dibalik jadi audio, endedAt dihapus, dan
-    // audio tersimpannya dibuang oleh beginAudio.
-    const meetingId = meetingIdFromUrl(tab?.url);
-    if (!meetingId) {
-      broadcastRec({ error: 'Buka halaman ruang Meet-nya dulu — rekaman mengambil audio tab ini.' });
-      return;
-    }
-    try {
-      const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
-      await startRecording({ streamId, meetingId, title: titleFromTab(tab?.title, meetingId) });
-    } catch (e) {
-      // TIDAK mereset rec di sini: klik kedua yang ditolak karena rekaman
-      // pertama sedang jalan juga mendarat di sini, dan resetnya akan mematikan
-      // status rekaman yang sehat (badge padam, tombol Stop hilang, dan saat
-      // meeting selesai onDisconnect melihat recording:false sehingga rekaman
-      // tak pernah difinalisasi). startRecording yang mereset miliknya sendiri.
-      broadcastRec({ error: e.message });
-    }
-  } else if (info.menuItemId === 'rec-stop') {
-    stopRecording();
-  }
-});
+  });
+}
 
 // Konfigurasi STT untuk pesan ke offscreen. Satu tempat: start & retranscribe
 // harus memakai aturan endpoint/model/bahasa yang persis sama.
@@ -150,7 +168,7 @@ async function startRecording({ streamId, meetingId, title }) {
     // Dokumen offscreen bisa sudah TERLANJUR dibuat sebelum kegagalan. Kalau
     // dibiarkan, hasOffscreen() true selamanya dan tiap start berikutnya
     // ditolak "Rekaman masih berjalan." sampai browser di-restart.
-    chrome.offscreen.closeDocument?.().catch(() => {});
+    chrome.offscreen?.closeDocument?.().catch(() => {});
     broadcastRec();
     throw e;
   } finally {
@@ -534,14 +552,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // menyuruh klik tombol yang tidak akan pernah muncul dan audio yang sudah
     // tersimpan jadi tak terjangkau selamanya.
     enqueueWrite(() => saveAudioTranscript(msg));
-    chrome.offscreen.closeDocument?.().catch(() => {});
+    chrome.offscreen?.closeDocument?.().catch(() => {});
     return false;
   }
   if (msg.type === 'audio-error') {
     rec = { recording: false, transcribing: false, meetingId: null };
     updateBadge();
     broadcastRec({ error: msg.error });
-    chrome.offscreen.closeDocument?.().catch(() => {});
+    chrome.offscreen?.closeDocument?.().catch(() => {});
     return false;
   }
   if (msg.type === 'audio-warn') {
