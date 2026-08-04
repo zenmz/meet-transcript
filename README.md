@@ -19,6 +19,7 @@ Seluruh data rapat disimpan secara lokal di peramban (*browser*) Anda. Tanpa ser
 * **Pembuatan MoM Otomatis:** Menghasilkan ringkasan, poin pembahasan, keputusan, dan *action items* menggunakan *endpoint* LLM yang kompatibel dengan OpenAI (misal: `gpt-4o-mini`). *Template* dapat dikustomisasi.
 * **Fleksibilitas Tanpa API Key:** Anda dapat menyalin *prompt* beserta transkrip ke *clipboard*, atau mengirimkannya secara otomatis ke Google Gemini di *tab* baru tanpa memerlukan integrasi API.
 * **Manajemen Riwayat Lokal:** Transkrip, MoM, dan setelan tersimpan di `chrome.storage.local`; potongan audio di IndexedDB. Ekspor riwayat ke `.txt` atau `.md` kapan saja.
+* **Sadar Rapat Berulang:** Rapat *recurring* memakai link (kode ruang) yang sama — setiap sesi tetap menjadi entri Riwayat terpisah. Jeda lebih dari 30 menit setelah rapat berakhir dianggap sesi baru; keluar-masuk sebentar tetap tersambung ke sesi yang sama.
 * **Penyelamatan Audio Cerdas:** Potongan audio disimpan ke IndexedDB selama proses perekaman. Jika terjadi kesalahan konfigurasi STT, Anda cukup melakukan "Transkrip ulang" tanpa kehilangan data audio.
 * **Siklus Hidup Otomatis:** Perekaman berhenti otomatis saat rapat selesai (keluar panggilan, pindah ruang, atau *tab* ditutup).
 
