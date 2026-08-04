@@ -150,3 +150,41 @@ test('fillTemplate tidak menafsirkan pola $ di transkrip', () => {
 test('DEFAULT_MOM_TEMPLATE mengandung placeholder', () => {
   assert.ok(DEFAULT_MOM_TEMPLATE.includes('{{transcript}}'));
 });
+
+// ---- lastActivityAt + isStaleMeeting: split sesi ruang recurring ----
+
+const { lastActivityAt, isStaleMeeting, SESSION_GAP_MS, CRASH_GAP_MS } = globalThis.MeetMerge;
+const MIN = 60000;
+const mk = (over = {}) => ({ id: 'abc-defg-hij', title: 't', startedAt: 0, endedAt: null, segments: [], mom: null, ...over });
+
+test('lastActivityAt pakai endedAt kalau tercatat', () => {
+  assert.equal(lastActivityAt(mk({ endedAt: 5000, segments: [{ t: 9000 }] })), 5000);
+});
+
+test('lastActivityAt jatuh ke segmen terakhir kalau endedAt null (crash)', () => {
+  assert.equal(lastActivityAt(mk({ segments: [{ t: 3000 }, { t: 8000 }, { t: 4000 }] })), 8000);
+});
+
+test('lastActivityAt jatuh ke startedAt untuk record tanpa segmen', () => {
+  assert.equal(lastActivityAt(mk({ startedAt: 1234 })), 1234);
+});
+
+test('isStaleMeeting: meeting berakhir < gap = sesi sama, tidak stale', () => {
+  const m = mk({ endedAt: 1000000 });
+  assert.equal(isStaleMeeting(m, 1000000 + SESSION_GAP_MS - MIN), false);
+});
+
+test('isStaleMeeting: meeting berakhir > gap = occurrence baru, stale', () => {
+  const m = mk({ endedAt: 1000000 });
+  assert.equal(isStaleMeeting(m, 1000000 + SESSION_GAP_MS + MIN), true);
+});
+
+test('isStaleMeeting: meeting LIVE yang hening 40 menit TIDAK stale (endedAt null pakai ambang crash)', () => {
+  const m = mk({ segments: [{ t: 1000000 }] });
+  assert.equal(isStaleMeeting(m, 1000000 + 40 * MIN), false);
+});
+
+test('isStaleMeeting: crash tanpa endedAt, aktivitas terakhir > ambang crash = stale', () => {
+  const m = mk({ segments: [{ t: 1000000 }] });
+  assert.equal(isStaleMeeting(m, 1000000 + CRASH_GAP_MS + MIN), true);
+});

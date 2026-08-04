@@ -272,11 +272,42 @@ async function stopRecording() {
   broadcastRec({ error: res?.error ?? 'Offscreen tidak merespons — rekaman dihentikan tanpa transkrip.' });
 }
 
+// Kode ruang Meet permanen per link, jadi occurrence baru meeting recurring
+// datang dengan meetingId yang SAMA. Record lama yang sudah stale (lihat
+// isStaleMeeting) diarsip ke id `kode@timestamp` dan key kode ruang diserahkan
+// ke record segar — tanpa ini transkrip standup hari ini menyambung ke record
+// kemarin. Memutasi `data` milik pemanggil (data[key] dihapus, data.meetings
+// diganti id arsip) lalu pemanggil membuat record segar seperti biasa. Wajib
+// dipanggil dari dalam enqueueWrite, seperti pemanggilnya.
+async function archiveIfStale(meetingId, data) {
+  const key = 'meeting:' + meetingId;
+  const old = data[key];
+  if (!old || !globalThis.MeetMerge.isStaleMeeting(old, Date.now())) return;
+  const lastActivity = globalThis.MeetMerge.lastActivityAt(old);
+  const archiveId = `${meetingId}@${lastActivity}`;
+  const meetings = data.meetings ?? [];
+  const i = meetings.indexOf(meetingId);
+  if (i !== -1) meetings[i] = archiveId; else meetings.unshift(archiveId);
+  data.meetings = meetings;
+  // endedAt diisi kalau kosong (sesi crash): record arsip sudah pasti selesai.
+  await chrome.storage.local.set({
+    ['meeting:' + archiveId]: { ...old, id: archiveId, endedAt: old.endedAt ?? lastActivity },
+  });
+  await chrome.storage.local.remove(key);
+  delete data[key];
+  // Audio tersimpan milik sesi lama ikut pindah ke id arsip — "Unduh audio" &
+  // "Transkrip ulang" tinggal di view record, jadi tanpa retag ini audionya
+  // yatim. Gagal retag ditelan: akibat terburuknya persis perilaku lama.
+  await globalThis.MeetAudioStore.retagAudioMeta(meetingId, archiveId, lastActivity).catch(() => {});
+  notifyPanel({ type: 'meeting-updated', id: archiveId });
+}
+
 // Catat meeting tanpa menyentuh segmen: dipakai saat rekaman MULAI, sebelum
 // ada satu pun hasil transkrip.
 async function ensureMeeting({ meetingId, title, startedAt }) {
   const key = 'meeting:' + meetingId;
   const data = await chrome.storage.local.get([key, 'meetings']);
+  await archiveIfStale(meetingId, data);
   const meeting = data[key] ?? {
     id: meetingId, title: title || meetingId, startedAt, endedAt: null, segments: [], mom: null,
   };
@@ -289,6 +320,13 @@ async function ensureMeeting({ meetingId, title, startedAt }) {
   notifyPanel({ type: 'meeting-updated', id: meetingId });
 }
 
+// Sengaja TANPA archiveIfStale: transkrip ini milik sesi yang BARU berakhir
+// (datang menit-menitan setelah stop, saat record-nya belum stale), dan
+// transkrip ulang dari arsip datang dengan id arsipnya sendiri (audio meta
+// ikut di-retag saat pengarsipan).
+// ponytail: transkrip browser-mode yang makan >30 menit SAMBIL sesi baru mulai
+// di ruang yang sama bisa mendarat di record baru — kalau kejadian, redirect ke
+// id arsip berdasarkan baseTime di sini.
 async function saveAudioTranscript({ meetingId, segments, baseTime, replace, legacy }) {
   const key = 'meeting:' + meetingId;
   const data = await chrome.storage.local.get([key, 'meetings']);
@@ -310,13 +348,14 @@ async function saveAudioTranscript({ meetingId, segments, baseTime, replace, leg
 async function saveSegments({ meetingId, title, segs }) {
   const key = 'meeting:' + meetingId;
   const data = await chrome.storage.local.get([key, 'meetings']);
+  await archiveIfStale(meetingId, data);
   const meeting = data[key] ?? {
     // title bisa string kosong (content script tak tahu judulnya) — record baru
     // tetap butuh sesuatu yang bisa ditampilkan.
     id: meetingId, title: title || meetingId, startedAt: Date.now(), endedAt: null, segments: [], mom: null,
   };
   if (title) meeting.title = title;
-  meeting.endedAt = null; // rejoin meeting lama → aktif lagi
+  meeting.endedAt = null; // rejoin (dalam ambang gap) di meeting yang sama → aktif lagi
   for (const seg of segs) globalThis.MeetMerge.upsertSegment(meeting.segments, seg);
   const meetings = data.meetings ?? [];
   if (!meetings.includes(meetingId)) meetings.unshift(meetingId);
