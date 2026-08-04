@@ -26,13 +26,13 @@ Seluruh data rapat disimpan secara lokal di peramban (*browser*) Anda. Tanpa ser
 
 ## 🚀 Panduan Instalasi
 
-Ekstensi ini berjalan pada **Chrome 116+** dan dipasang melalui mode *Developer*. (Panel samping sendiri sudah ada sejak Chrome 114, tetapi pemulihan status rekaman memakai `chrome.runtime.getContexts` yang baru tersedia di 116.) Tidak memerlukan proses *build* atau instalasi melalui Chrome Web Store.
+Ekstensi ini berjalan pada **Chrome 116+** — termasuk browser Chromium lain (Edge, Brave, Opera, Vivaldi) — dan **Firefox 128+**. Di Chromium dipasang melalui mode *Developer*; di Firefox melalui fail `.xpi` yang sudah ditandatangani AMO. **Versi Firefox caption-only**: tanpa rekam audio/STT, karena Firefox tidak memiliki API `tabCapture`. (Panel samping sendiri sudah ada sejak Chrome 114, tetapi pemulihan status rekaman memakai `chrome.runtime.getContexts` yang baru tersedia di 116.) Tidak memerlukan proses *build* atau instalasi melalui Chrome Web Store.
 
 ### Metode 1: Melalui Rilis ZIP (Direkomendasikan)
 
 1. Buka halaman **[Releases](../../releases)** dan unduh aset `meet-transcript-vX.Y.Z.zip` terbaru. *(Paket ini bersih — hanya fail ekstensi, tanpa docs/test. ZIP-nya ±5 MB dan mengembang jadi ±22 MB setelah diekstrak; sebagian besar adalah runtime WASM untuk mode Whisper di Browser.)*
 2. Ekstrak fail ZIP ke direktori permanen di komputer Anda (hindari folder *Downloads*).
-3. Buka URL `chrome://extensions` di Google Chrome.
+3. Buka URL `chrome://extensions` di Google Chrome (Edge: `edge://extensions`, Brave: `brave://extensions`, Opera: `opera://extensions`).
 4. Aktifkan **Developer mode** (sakelar di sudut kanan atas).
 5. Klik **Load unpacked**, lalu pilih folder **`meet-transcript`** di dalam hasil ekstraksi — folder yang isinya langsung `manifest.json`, bukan folder pembungkusnya.
 6. Sematkan (*pin*) ikon Meet Transcript di *toolbar* Anda.
@@ -50,6 +50,17 @@ Buka `chrome://extensions` → **Load unpacked** → pilih folder hasil *clone*.
 > [!NOTE]
 > Peringatan "Disable developer mode extensions" yang muncul saat Chrome dijalankan adalah perilaku normal untuk ekstensi di luar Web Store. Anda dapat mengabaikannya. Jangan klik "Remove".
 
+### Firefox
+
+1. Buka halaman **[Releases](../../releases)** dan unduh fail `.xpi` terbaru.
+2. Seret (*drag*) fail tersebut ke jendela Firefox, lalu setujui pemasangan. Terpasang permanen — tidak perlu mode Developer.
+3. Klik ikon Meet Transcript di *toolbar* untuk membuka/menutup *sidebar*.
+
+> [!NOTE]
+> Versi Firefox **caption-only**: fitur Perekaman Audio & Mode STT di bawah tidak tersedia (Firefox tidak punya API `tabCapture`). Transkrip dari *caption*, Riwayat, MoM, dan Kirim ke Gemini berfungsi penuh.
+>
+> Untuk pengembangan: `./scripts/pack.sh --firefox`, ekstrak ZIP-nya, lalu muat via `about:debugging` → *This Firefox* → *Load Temporary Add-on* (hilang saat Firefox ditutup — distribusi normal tetap lewat `.xpi`).
+
 ---
 
 ## 📖 Penggunaan Dasar (Quick Start)
@@ -64,9 +75,9 @@ Sebelum penggunaan pertama, isi menu *Settings*: masukkan API Key LLM, pilih Mod
 
 ---
 
-## 🎙️ Perekaman Audio & Mode STT
+## 🎙️ Perekaman Audio & Mode STT (Chrome/Chromium saja)
 
-Anda dapat merekam audio *tab* untuk ditranskripsi via STT, baik secara mandiri maupun bersamaan dengan fitur *caption* bawaan Meet.
+Anda dapat merekam audio *tab* untuk ditranskripsi via STT, baik secara mandiri maupun bersamaan dengan fitur *caption* bawaan Meet. Fitur di seksi ini tidak tersedia di Firefox.
 
 ### Cara Merekam Audio
 
@@ -139,6 +150,7 @@ Proyek ini dibangun tanpa *build step* yang kompleks (tanpa `npm install`), meng
 * `panel/` : Antarmuka pengguna (*Live*, *Riwayat*, *Settings*).
 * `offscreen/` : Modul perekaman audio *tab* dan orkestrasi STT (service worker MV3 bisa mati di tengah unggahan panjang).
 * `lib/` : Utilitas inti (`openai.js`, `stt.js`, `audiostore.js`/IndexedDB, `merge.js`), plus `whisper-browser.js` dan `vendor/` — transformers.js + ONNX Runtime WASM (±22 MB), mesin STT mode browser.
+* `manifest.firefox.json` : manifest untuk build Firefox (`sidebar_action`, *event page*, tanpa `tabCapture`/`offscreen`) — versinya wajib sama dengan `manifest.json`.
 * `test/` · `scripts/` · `icons/` · `docs/` : pengujian Node, skrip rilis, ikon, dan catatan desain internal.
 
 **Menjalankan Pengujian (Testing):**
@@ -149,17 +161,19 @@ node --test test/*.test.mjs
 
 **Membuat Rilis (Khusus Maintainer):**
 
-Membutuhkan `node` (skrip membaca versi dari `manifest.json`) dan `gh` CLI yang sudah login.
+Membutuhkan `node` (skrip membaca versi dari `manifest.json`), `gh` CLI yang sudah login, dan kredensial AMO untuk *signing* Firefox (buat sekali di addons.mozilla.org → *Tools* → *Manage API Keys*).
 
-1. Perbarui `"version"` di dalam `manifest.json`.
+1. Perbarui `"version"` di `manifest.json` **dan** `manifest.firefox.json` (skrip menolak jalan bila beda).
 2. Lakukan *commit* dan `git push`.
 3. Jalankan skrip rilis:
 
 ```bash
+export AMO_JWT_ISSUER="user:..."
+export AMO_JWT_SECRET="..."
 ./scripts/pack.sh --release
 ```
 
-*(Skrip ini akan membangun fail ZIP yang bersih pada direktori `dist/` dan memublikasikannya secara otomatis ke GitHub Releases).*
+*(Skrip membangun ZIP Chrome + ZIP Firefox (digate `web-ext lint`), menandatangani `.xpi` via AMO unlisted, lalu memublikasikan ketiganya ke GitHub Releases. Build lokal saja: `./scripts/pack.sh` untuk Chrome, `./scripts/pack.sh --firefox` untuk Firefox.)*
 
 ---
 
