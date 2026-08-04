@@ -320,16 +320,30 @@ async function ensureMeeting({ meetingId, title, startedAt }) {
   notifyPanel({ type: 'meeting-updated', id: meetingId });
 }
 
-// Sengaja TANPA archiveIfStale: transkrip ini milik sesi yang BARU berakhir
-// (datang menit-menitan setelah stop, saat record-nya belum stale), dan
-// transkrip ulang dari arsip datang dengan id arsipnya sendiri (audio meta
-// ikut di-retag saat pengarsipan).
-// ponytail: transkrip browser-mode yang makan >30 menit SAMBIL sesi baru mulai
-// di ruang yang sama bisa mendarat di record baru — kalau kejadian, redirect ke
-// id arsip berdasarkan baseTime di sini.
+// Sengaja TANPA archiveIfStale: transkrip ini milik sesi yang BARU berakhir,
+// dan transkrip ulang dari arsip datang dengan id arsipnya sendiri (audio meta
+// ikut di-retag saat pengarsipan). Kasus sebaliknya ditangani redirect di
+// bawah: STT browser bisa menggiling >30 menit, dan selama itu ruangnya bisa
+// keburu diarsip lalu dipakai occurrence baru — tanpa redirect, transkrip
+// sesi LAMA mendarat di record sesi baru (persis bug yang commit ini perbaiki,
+// lewat pintu samping).
 async function saveAudioTranscript({ meetingId, segments, baseTime, replace, legacy }) {
-  const key = 'meeting:' + meetingId;
+  let key = 'meeting:' + meetingId;
   const data = await chrome.storage.local.get([key, 'meetings']);
+  // Record di key kode ruang mulai SETELAH rekaman ini? Berarti bukan lagi
+  // miliknya — cari record arsip pemilik rekaman (startedAt <= baseTime).
+  // Tidak ketemu → jatuh ke perilaku lama (tulis ke record yang ada).
+  if (data[key] && baseTime && data[key].startedAt > baseTime) {
+    const ids = (data.meetings ?? []).filter((m) => String(m).startsWith(meetingId + '@'));
+    const recs = await chrome.storage.local.get(ids.map((id) => 'meeting:' + id));
+    const owner = globalThis.MeetMerge.ownerOfRecording(
+      ids.map((id) => recs['meeting:' + id]), baseTime);
+    if (owner) {
+      meetingId = owner.id;
+      key = 'meeting:' + meetingId;
+      data[key] = owner;
+    }
+  }
   const meeting = data[key] ?? {
     // startedAt = waktu MULAI rekam, bukan waktu simpan: kalau dipakai waktu
     // simpan, segmen ber-timestamp lebih awal dari "mulai" meeting-nya.

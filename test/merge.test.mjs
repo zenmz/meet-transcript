@@ -188,3 +188,13 @@ test('isStaleMeeting: crash tanpa endedAt, aktivitas terakhir > ambang crash = s
   const m = mk({ segments: [{ t: 1000000 }] });
   assert.equal(isStaleMeeting(m, 1000000 + CRASH_GAP_MS + MIN), true);
 });
+
+test('ownerOfRecording pilih record termuda yang mulai <= baseTime rekaman', () => {
+  const { ownerOfRecording } = globalThis.MeetMerge;
+  const a = mk({ id: 'x@1', startedAt: 1000 });
+  const b = mk({ id: 'x@2', startedAt: 5000 });
+  const c = mk({ id: 'x', startedAt: 9000 });
+  assert.equal(ownerOfRecording([a, b, c], 7000), b);   // rekaman mulai 7000 → milik b
+  assert.equal(ownerOfRecording([a, b, c], 500), null); // lebih tua dari semua record
+  assert.equal(ownerOfRecording([null, a], 2000), a);   // record hilang di-skip
+});
