@@ -5,6 +5,11 @@ let tab = 'live';
 let viewingId = null; // di tab Riwayat: meeting yang sedang dibuka
 let status = { id: null, inCall: false, captionsOn: false, lastSegmentAt: 0, captionsOnAt: 0 };
 let recState = { recording: false, transcribing: false, done: 0, total: 0, error: null };
+// Firefox tidak punya tabCapture — rekam audio mustahil di sana, jadi seluruh
+// UI-nya (bar rekam di tab Live, sumber "Rekam audio" + blok STT di Settings)
+// disembunyikan. Tombol audio di Riwayat TIDAK perlu digate: syaratnya
+// audioMeta milik meeting itu, dan di Firefox tak pernah ada audio tersimpan.
+const HAS_AUDIO = !!chrome.tabCapture;
 let settingsCache = {};
 async function loadSettings() { settingsCache = (await chrome.storage.local.get('settings')).settings ?? {}; }
 
@@ -188,7 +193,7 @@ async function renderMeeting(id, live, epoch) {
   // juga (caption jalan live, audio jadi cadangan/pelengkap yang ditranskrip
   // saat stop). Tanpa bar ini di mode caption, rekaman yang dimulai dari klik
   // kanan tidak punya tombol Stop, progres, maupun tempat errornya muncul.
-  if (live) {
+  if (live && HAS_AUDIO) {
     const bar = el('div', 'actions');
     if (recState.transcribing) {
       // note = kabar dari mode browser (unduh model bisa bermenit-menit tanpa
@@ -574,8 +579,11 @@ async function renderSettings(epoch) {
   // tersimpan walau tersembunyi supaya pindah mode bolak-balik tidak
   // menghapus konfigurasi yang sudah benar.
   function applyMode() {
-    const audio = audioMode();
+    const audio = HAS_AUDIO && audioMode();
     const m = sttModeSel.value;
+    // Field tetap DIBUAT (doSave membaca value-nya, jadi setelan STT yang
+    // tersimpan tidak hangus saat Simpan di Firefox) — cuma barisnya yang hilang.
+    show(source, HAS_AUDIO);
     show(sttModeSel, audio);
     show(sttBaseUrl, audio && m !== 'browser');
     show(sttApiKey, audio && m === 'api');
