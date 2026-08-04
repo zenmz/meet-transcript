@@ -66,12 +66,12 @@ Buka `chrome://extensions` → **Load unpacked** → pilih folder hasil *clone*.
 ## 📖 Penggunaan Dasar (Quick Start)
 
 1. **Mulai Rapat:** Bergabunglah ke Google Meet. Ekstensi akan mencoba mengaktifkan *Closed Captions* (CC) secara otomatis. Jika gagal, aktifkan manual melalui *toolbar* Meet.
-2. **Buka Panel:** Klik ikon ekstensi untuk membuka *side panel*. *Tab* **Live** akan mulai terisi secara otomatis.
+2. **Buka Panel:** Klik ikon ekstensi untuk membuka *side panel* (Firefox: *sidebar*). *Tab* **Live** akan mulai terisi secara otomatis.
 3. **Rekam Audio (Opsional):** Klik kanan pada area mana saja di halaman Meet, lalu pilih **Rekam audio meeting**.
 4. **Hasilkan MoM:** Setelah rapat selesai, buka *tab* **Riwayat** → pilih rapat → klik **Generate MoM**. Tombol **Unduh .txt** dan **Unduh .md** berada di dalam menu **Lainnya**.
 
 **Konfigurasi Awal (Settings):**
-Sebelum penggunaan pertama, isi menu *Settings*: masukkan API Key LLM, pilih Model, dan sesuaikan *Template* MoM (gunakan variabel `{{transcript}}`). Blok **Mode STT** baru muncul setelah **Sumber transkrip** diubah ke *Rekam audio*. Gunakan tombol **Tes koneksi** untuk memvalidasi konfigurasi Anda.
+Sebelum penggunaan pertama, isi menu *Settings*: masukkan API Key LLM, pilih Model, dan sesuaikan *Template* MoM (gunakan variabel `{{transcript}}`). Blok **Mode STT** baru muncul setelah **Sumber transkrip** diubah ke *Rekam audio* (Chrome/Chromium saja — di Firefox blok ini tidak ada). Gunakan tombol **Tes koneksi** untuk memvalidasi konfigurasi Anda.
 
 ---
 
