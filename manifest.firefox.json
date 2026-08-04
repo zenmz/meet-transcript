@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "Meet Transcript",
+  "version": "0.2.0",
+  "description": "Transkrip Google Meet dari caption, lalu jadi Minutes of Meeting. Versi Firefox: caption-only (tanpa rekam audio).",
+  "browser_specific_settings": {
+    "gecko": { "id": "meet-transcript@zenmz", "strict_min_version": "128.0" }
+  },
+  "permissions": ["storage", "unlimitedStorage", "activeTab", "contextMenus", "scripting"],
+  "host_permissions": [
+    "https://meet.google.com/*",
+    "https://api.openai.com/*",
+    "https://gemini.google.com/*",
+    "https://huggingface.co/*",
+    "https://*.hf.co/*"
+  ],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "background": {
+    "scripts": ["lib/merge.js", "lib/openai.js", "lib/stt.js", "lib/audiostore.js", "background/service-worker.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://meet.google.com/*"],
+      "js": ["content/selectors.js", "content/session.js", "content/captions.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "sidebar_action": {
+    "default_panel": "panel/panel.html",
+    "default_title": "Meet Transcript",
+    "default_icon": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
+    "open_at_install": false
+  },
+  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
+  "action": {
+    "default_title": "Meet Transcript",
+    "default_icon": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+  }
+}
