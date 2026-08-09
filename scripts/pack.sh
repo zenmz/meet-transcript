@@ -51,7 +51,9 @@ stage() {
   find "$STAGE_DIR" -name '.DS_Store' -delete
   if [ "$flavor" = firefox ]; then
     # Firefox caption-only: offscreen (tabCapture) tidak ikut, manifest diganti.
-    rm -rf "$STAGE_DIR/offscreen"
+    # STT in-browser juga dibuang (~21MB, sumber warning eval AMO): hanya
+    # dijangkau lewat dynamic import di jalur audio yang mati di Firefox.
+    rm -rf "$STAGE_DIR/offscreen" "$STAGE_DIR/lib/vendor" "$STAGE_DIR/lib/whisper-browser.js"
     cp manifest.firefox.json "$STAGE_DIR/manifest.json"
   fi
 }
