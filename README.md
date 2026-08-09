@@ -27,7 +27,7 @@ Seluruh data rapat disimpan secara lokal di peramban (*browser*) Anda. Tanpa ser
 
 ## 🚀 Panduan Instalasi
 
-Ekstensi ini berjalan pada **Chrome 116+** — termasuk browser Chromium lain (Edge, Brave, Opera, Vivaldi) — dan **Firefox 128+**. Di Chromium dipasang melalui mode *Developer*; di Firefox melalui fail `.xpi` yang sudah ditandatangani AMO. **Versi Firefox caption-only**: tanpa rekam audio/STT, karena Firefox tidak memiliki API `tabCapture`. (Panel samping sendiri sudah ada sejak Chrome 114, tetapi pemulihan status rekaman memakai `chrome.runtime.getContexts` yang baru tersedia di 116.) Tidak memerlukan proses *build* atau instalasi melalui Chrome Web Store.
+Ekstensi ini berjalan pada **Chrome 116+** — termasuk browser Chromium lain (Edge, Brave, Opera, Vivaldi) — dan **Firefox 128+**. Di Chromium dipasang melalui mode *Developer*; di Firefox langsung dari [Firefox Add-ons resmi](https://addons.mozilla.org/en-US/firefox/addon/meet-transcript/). **Versi Firefox caption-only**: tanpa rekam audio/STT, karena Firefox tidak memiliki API `tabCapture`. (Panel samping sendiri sudah ada sejak Chrome 114, tetapi pemulihan status rekaman memakai `chrome.runtime.getContexts` yang baru tersedia di 116.) Tidak memerlukan proses *build* atau instalasi melalui Chrome Web Store.
 
 ### Metode 1: Melalui Rilis ZIP (Direkomendasikan)
 
@@ -53,14 +53,12 @@ Buka `chrome://extensions` → **Load unpacked** → pilih folder hasil *clone*.
 
 ### Firefox
 
-1. Buka halaman **[Releases](../../releases)** dan unduh fail `.xpi` terbaru.
-2. Seret (*drag*) fail tersebut ke jendela Firefox, lalu setujui pemasangan. Terpasang permanen — tidak perlu mode Developer.
-3. Klik ikon Meet Transcript di *toolbar* untuk membuka/menutup *sidebar*.
+Pasang langsung dari Add-ons resmi Mozilla: **[Meet Transcript di Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/meet-transcript/)** → klik **Add to Firefox**. Update berjalan otomatis. Setelah terpasang, klik ikon Meet Transcript di *toolbar* untuk membuka/menutup *sidebar*.
 
 > [!NOTE]
 > Versi Firefox **caption-only**: fitur Perekaman Audio & Mode STT di bawah tidak tersedia (Firefox tidak punya API `tabCapture`). Transkrip dari *caption*, Riwayat, MoM, dan Kirim ke Gemini berfungsi penuh.
 >
-> Untuk pengembangan: `./scripts/pack.sh --firefox`, ekstrak ZIP-nya, lalu muat via `about:debugging` → *This Firefox* → *Load Temporary Add-on* (hilang saat Firefox ditutup — distribusi normal tetap lewat `.xpi`).
+> Untuk pengembangan: `./scripts/pack.sh --firefox`, ekstrak ZIP-nya, lalu muat via `about:debugging` → *This Firefox* → *Load Temporary Add-on* (hilang saat Firefox ditutup).
 
 ---
 
