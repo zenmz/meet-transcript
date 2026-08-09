@@ -4,10 +4,11 @@
 # sebelum rilis (pack menolak jalan kalau keduanya beda).
 #
 #   ./scripts/pack.sh            # dist/meet-transcript-vX.Y.Z.zip (Chrome/Chromium)
-#   ./scripts/pack.sh --firefox  # dist/meet-transcript-firefox-vX.Y.Z.zip (digate web-ext lint)
-#                                # → upload manual sebagai versi baru di AMO Developer Hub
-#   ./scripts/pack.sh --release  # ZIP Chrome + gh release (publish!) — Firefox TIDAK ikut
-#                                # release: distribusinya halaman AMO, bukan GitHub
+#   ./scripts/pack.sh --release  # ZIP Chrome + gh release (publish!)
+#
+# ZIP hanya untuk Chrome/Chromium. Firefox TIDAK dirilis dari sini —
+# distribusinya halaman AMO (update versi lewat AMO Developer Hub):
+# https://addons.mozilla.org/en-US/firefox/addon/meet-transcript/
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -16,7 +17,6 @@ cd "$ROOT"
 MODE=chrome
 case "${1:-}" in
   '') ;;
-  --firefox) MODE=firefox ;;
   --release) MODE=release ;;
   *) echo "pack: argumen tak dikenal: $1" >&2; exit 1 ;;
 esac
@@ -41,22 +41,14 @@ FVER="$(node -p "require('./manifest.firefox.json').version")"
 
 mkdir -p "$ROOT/dist"
 
-# stage <chrome|firefox> — isi $STAGE_DIR. Global, bukan echo/capture: subshell
-# $(...) tidak mewarisi errexit (bash 3.2 macOS), jadi cp yang gagal di dalam
-# capture tertelan dan zip cacat lolos. Dipanggil polos begini, set -e bekerja.
+# stage — isi $STAGE_DIR. Global, bukan echo/capture: subshell $(...) tidak
+# mewarisi errexit (bash 3.2 macOS), jadi cp yang gagal di dalam capture
+# tertelan dan zip cacat lolos. Dipanggil polos begini, set -e bekerja.
 stage() {
-  local flavor="$1"
   STAGE_DIR="$(mktemp -d)/$NAME"
   mkdir -p "$STAGE_DIR"
   for it in "${ITEMS[@]}"; do cp -R "$it" "$STAGE_DIR/"; done
   find "$STAGE_DIR" -name '.DS_Store' -delete
-  if [ "$flavor" = firefox ]; then
-    # Firefox caption-only: offscreen (tabCapture) tidak ikut, manifest diganti.
-    # STT in-browser juga dibuang (~21MB, sumber warning eval AMO): hanya
-    # dijangkau lewat dynamic import di jalur audio yang mati di Firefox.
-    rm -rf "$STAGE_DIR/offscreen" "$STAGE_DIR/lib/vendor" "$STAGE_DIR/lib/whisper-browser.js"
-    cp manifest.firefox.json "$STAGE_DIR/manifest.json"
-  fi
 }
 
 # zip_stage <stagedir> <zippath> — zip lalu hapus staging.
@@ -70,19 +62,10 @@ zip_stage() {
   echo "pack: $out"
 }
 
-build_chrome() { stage chrome; zip_stage "$STAGE_DIR" "$ROOT/dist/${NAME}-v${VER}.zip"; }
-
-# Lint dulu, baru zip: zip Firefox yang gagal lint tidak boleh pernah lahir.
-build_firefox() {
-  stage firefox
-  npx --yes web-ext lint --source-dir "$STAGE_DIR" \
-    || { rm -rf "$(dirname "$STAGE_DIR")"; echo "pack: web-ext lint gagal" >&2; exit 1; }
-  zip_stage "$STAGE_DIR" "$ROOT/dist/${NAME}-firefox-v${VER}.zip"
-}
+build_chrome() { stage; zip_stage "$STAGE_DIR" "$ROOT/dist/${NAME}-v${VER}.zip"; }
 
 case "$MODE" in
   chrome)  build_chrome ;;
-  firefox) build_firefox ;;
   release)
     build_chrome
     # Tag v$VER dibuat di commit HEAD sekarang — pastikan sudah di-push & bersih.

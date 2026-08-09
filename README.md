@@ -58,7 +58,7 @@ Pasang langsung dari Add-ons resmi Mozilla: **[Meet Transcript di Firefox Add-on
 > [!NOTE]
 > Versi Firefox **caption-only**: fitur Perekaman Audio & Mode STT di bawah tidak tersedia (Firefox tidak punya API `tabCapture`). Transkrip dari *caption*, Riwayat, MoM, dan Kirim ke Gemini berfungsi penuh.
 >
-> Untuk pengembangan: `./scripts/pack.sh --firefox`, ekstrak ZIP-nya, lalu muat via `about:debugging` → *This Firefox* → *Load Temporary Add-on* (hilang saat Firefox ditutup).
+> Untuk pengembangan: salin folder repo, di salinan itu timpa `manifest.json` dengan isi `manifest.firefox.json`, lalu muat via `about:debugging` → *This Firefox* → *Load Temporary Add-on* (hilang saat Firefox ditutup).
 
 ---
 
@@ -170,7 +170,7 @@ Membutuhkan `node` (skrip membaca versi dari `manifest.json`) dan `gh` CLI yang 
 ./scripts/pack.sh --release
 ```
 
-*(Skrip membangun ZIP Chrome lalu memublikasikannya ke GitHub Releases — ZIP hanya untuk Chrome/Chromium. Rilis Firefox terpisah: bangun dengan `./scripts/pack.sh --firefox`, lalu upload ZIP-nya sebagai versi baru di [AMO Developer Hub](https://addons.mozilla.org/developers/) — pengguna Firefox mendapat update otomatis dari [halaman add-on](https://addons.mozilla.org/en-US/firefox/addon/meet-transcript/).)*
+*(Skrip membangun ZIP Chrome lalu memublikasikannya ke GitHub Releases — ZIP hanya untuk Chrome/Chromium. Rilis Firefox terpisah dan tanpa ZIP di GitHub: upload versi baru di [AMO Developer Hub](https://addons.mozilla.org/developers/) — pengguna Firefox mendapat update otomatis dari [halaman add-on](https://addons.mozilla.org/en-US/firefox/addon/meet-transcript/).)*
 
 ---
 
