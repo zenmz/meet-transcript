@@ -57,10 +57,12 @@ stage() {
 }
 
 # zip_stage <stagedir> <zippath> — zip lalu hapus staging.
+# Isi di-zip dari DALAM folder: manifest.json wajib di root zip — AMO dan
+# Chrome Web Store menolak zip yang isinya satu folder pembungkus.
 zip_stage() {
   local dir="$1" out="$2"
   rm -f "$out"
-  ( cd "$(dirname "$dir")" && zip -rq "$out" "$(basename "$dir")" )
+  ( cd "$dir" && zip -rq "$out" . )
   rm -rf "$(dirname "$dir")"
   echo "pack: $out"
 }
