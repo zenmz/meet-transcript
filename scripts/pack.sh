@@ -5,8 +5,9 @@
 #
 #   ./scripts/pack.sh            # dist/meet-transcript-vX.Y.Z.zip (Chrome/Chromium)
 #   ./scripts/pack.sh --firefox  # dist/meet-transcript-firefox-vX.Y.Z.zip (digate web-ext lint)
-#   ./scripts/pack.sh --release  # build keduanya + sign .xpi (AMO unlisted) + gh release (publish!)
-#                                # butuh env AMO_JWT_ISSUER + AMO_JWT_SECRET
+#                                # → upload manual sebagai versi baru di AMO Developer Hub
+#   ./scripts/pack.sh --release  # ZIP Chrome + gh release (publish!) — Firefox TIDAK ikut
+#                                # release: distribusinya halaman AMO, bukan GitHub
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -79,32 +80,14 @@ build_firefox() {
   zip_stage "$STAGE_DIR" "$ROOT/dist/${NAME}-firefox-v${VER}.zip"
 }
 
-# Sign AMO unlisted → dist/*.xpi. Kredensial dari env — tidak pernah masuk repo.
-sign_firefox() {
-  : "${AMO_JWT_ISSUER:?pack: set AMO_JWT_ISSUER — addons.mozilla.org → Tools → Manage API Keys}"
-  : "${AMO_JWT_SECRET:?pack: set AMO_JWT_SECRET}"
-  stage firefox
-  npx --yes web-ext sign --channel=unlisted --source-dir "$STAGE_DIR" \
-    --api-key "$AMO_JWT_ISSUER" --api-secret "$AMO_JWT_SECRET" \
-    --artifacts-dir "$ROOT/dist" \
-    || { rm -rf "$(dirname "$STAGE_DIR")"; echo "pack: web-ext sign gagal" >&2; exit 1; }
-  rm -rf "$(dirname "$STAGE_DIR")"
-  XPI="$(ls -t "$ROOT"/dist/*.xpi | head -1)"
-  echo "pack: $XPI"
-}
-
 case "$MODE" in
   chrome)  build_chrome ;;
   firefox) build_firefox ;;
   release)
     build_chrome
-    build_firefox
-    sign_firefox
     # Tag v$VER dibuat di commit HEAD sekarang — pastikan sudah di-push & bersih.
     gh release create "v$VER" \
       "$ROOT/dist/${NAME}-v${VER}.zip" \
-      "$ROOT/dist/${NAME}-firefox-v${VER}.zip" \
-      "$XPI" \
       --title "v$VER" \
       --notes "Ekstensi Meet Transcript untuk tim.
 
@@ -114,7 +97,8 @@ case "$MODE" in
 3. \`chrome://extensions\` (Edge: \`edge://extensions\`, dst) → Developer mode → Load unpacked → pilih folder itu.
 
 **Firefox:**
-Download fail \`.xpi\`, buka dengan Firefox (drag ke jendela Firefox), setujui pemasangan. Versi Firefox caption-only — tanpa rekam audio/STT.
+Pasang dari halaman resmi (caption-only — tanpa rekam audio/STT):
+https://addons.mozilla.org/en-US/firefox/addon/meet-transcript/
 
 Isi ZIP hanya file ekstensi (tanpa docs/test). Detail di README."
     echo "pack: rilis v$VER dibuat"

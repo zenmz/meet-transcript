@@ -160,19 +160,17 @@ node --test test/*.test.mjs
 
 **Membuat Rilis (Khusus Maintainer):**
 
-Membutuhkan `node` (skrip membaca versi dari `manifest.json`), `gh` CLI yang sudah login, dan kredensial AMO untuk *signing* Firefox (buat sekali di addons.mozilla.org → *Tools* → *Manage API Keys*).
+Membutuhkan `node` (skrip membaca versi dari `manifest.json`) dan `gh` CLI yang sudah login.
 
 1. Perbarui `"version"` di `manifest.json` **dan** `manifest.firefox.json` (skrip menolak jalan bila beda).
 2. Lakukan *commit* dan `git push`.
 3. Jalankan skrip rilis:
 
 ```bash
-export AMO_JWT_ISSUER="user:..."
-export AMO_JWT_SECRET="..."
 ./scripts/pack.sh --release
 ```
 
-*(Skrip membangun ZIP Chrome + ZIP Firefox (digate `web-ext lint`), menandatangani `.xpi` via AMO unlisted, lalu memublikasikan ketiganya ke GitHub Releases. Build lokal saja: `./scripts/pack.sh` untuk Chrome, `./scripts/pack.sh --firefox` untuk Firefox.)*
+*(Skrip membangun ZIP Chrome lalu memublikasikannya ke GitHub Releases — ZIP hanya untuk Chrome/Chromium. Rilis Firefox terpisah: bangun dengan `./scripts/pack.sh --firefox`, lalu upload ZIP-nya sebagai versi baru di [AMO Developer Hub](https://addons.mozilla.org/developers/) — pengguna Firefox mendapat update otomatis dari [halaman add-on](https://addons.mozilla.org/en-US/firefox/addon/meet-transcript/).)*
 
 ---
 
