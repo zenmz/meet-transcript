@@ -3,6 +3,7 @@
 let audioCtx = null;
 let stream = null;
 let recorder = null;
+let videoRecorder = null;
 let rotateTimer = null;
 let silenceTimer = null;
 let chunkBlobs = [];   // Blob standalone per chunk
@@ -16,6 +17,8 @@ let cfg = null;        // {baseUrl, apiKey, sttMode, sttModel, sttLanguage, chun
 let busy = false;
 const MIME = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
   ? 'audio/webm;codecs=opus' : 'audio/webm';
+const VIDEO_MIME = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+  ? 'video/webm;codecs=vp9,opus' : 'video/webm';
 
 // catch: SW sedang teardown & panel tertutup → tak ada penerima, dan rejection
 // tanpa handler jadi unhandled rejection di offscreen document.
@@ -23,7 +26,10 @@ function toSW(msg) { chrome.runtime.sendMessage(msg).catch(() => {}); }
 
 function startChunkRecorder() {
   const data = []; // per-recorder: rotasi tak boleh menabrak data recorder lain
-  recorder = new MediaRecorder(stream, { mimeType: MIME });
+  // Substream audio-only: saat mode video, stream punya track video dan
+  // MediaRecorder ber-MIME audio menolaknya. Track-nya objek yang sama,
+  // cleanup stream utama sudah mencakup ini.
+  recorder = new MediaRecorder(new MediaStream(stream.getAudioTracks()), { mimeType: MIME });
   recorder.ondataavailable = (e) => { if (e.data.size) data.push(e.data); };
   recorder.onstop = () => {
     const blob = new Blob(data, { type: MIME });
@@ -79,18 +85,52 @@ function rotateChunk() {
   startChunkRecorder();
 }
 
+// SATU recorder jalan terus (bukan rotasi seperti audio): part hasil timeslice
+// bukan file berdiri sendiri — hanya gabungan berurutan yang valid, jadi
+// memutus recorder berarti memutus file. Timeslice 60 detik: crash di tengah
+// meeting kehilangan maksimal 1 menit video terakhir, bukan seluruh file.
+function startVideoRecorder() {
+  videoRecorder = new MediaRecorder(stream, {
+    mimeType: VIDEO_MIME,
+    videoBitsPerSecond: 500_000, // preset seimbang: 720p 10fps ±250 MB/jam
+    audioBitsPerSecond: 48_000,
+  });
+  videoRecorder.ondataavailable = (e) => {
+    if (!e.data.size) return;
+    pendingSaves.push(globalThis.MeetAudioStore.appendVideoPart(e.data).catch((err) =>
+      toSW({ type: 'audio-warn', meetingId: cfg?.meetingId,
+        error: 'Satu potongan video gagal disimpan — file video bisa rusak mulai menit itu: ' + err.message })));
+  };
+  videoRecorder.start(60000);
+}
+
 async function start(msg) {
   if (rotateTimer) { clearInterval(rotateTimer); rotateTimer = null; }
   stopSilenceWatch();
   if (recorder && recorder.state !== 'inactive') { recorder.onstop = null; recorder.stop(); }
+  if (videoRecorder && videoRecorder.state !== 'inactive') {
+    videoRecorder.ondataavailable = null;
+    videoRecorder.stop();
+  }
+  videoRecorder = null;
   stream?.getTracks().forEach((t) => t.stop());
   await audioCtx?.close().catch(() => {});
   cfg = msg;
   chunkBlobs = [];
   pendingSaves = [];
-  stream = await navigator.mediaDevices.getUserMedia({
+  const constraints = {
     audio: { mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: msg.streamId } },
-  });
+  };
+  if (msg.video) {
+    // Preset seimbang: cukup untuk grid muka + slide, ±250 MB/jam dengan
+    // bitrate di startVideoRecorder. contentHint 'detail' di bawah menjaga
+    // teks slide tetap tajam di bitrate rendah.
+    constraints.video = { mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: msg.streamId,
+      maxWidth: 1280, maxHeight: 720, maxFrameRate: 10 } };
+  }
+  stream = await navigator.mediaDevices.getUserMedia(constraints);
+  const vTrack = stream.getVideoTracks()[0];
+  if (vTrack) vTrack.contentHint = 'detail';
   // Meta ditulis sebelum chunk pertama: meetingId + waktu mulai sudah
   // tersimpan walau rekaman nanti mati di tengah.
   await globalThis.MeetAudioStore.beginAudio(
@@ -102,24 +142,25 @@ async function start(msg) {
   if (audioCtx.state === 'suspended') await audioCtx.resume(); // tanpa ini tab bisa senyap
   watchSilence(src);
   startChunkRecorder();
+  // Video itu lapisan opsional: konstruktor MediaRecorder bisa menolak
+  // kombinasi mimeType/bitrate di mesin tertentu (NotSupportedError), dan
+  // tanpa guard ini exception-nya menjalar keluar start() → SW mereset state
+  // dan menutup offscreen, jadi rekaman AUDIO yang sebenarnya sehat ikut mati
+  // dan seluruh transkrip meeting hilang gara-gara lapisan tambahan.
+  if (msg.video) {
+    try {
+      startVideoRecorder();
+    } catch (e) {
+      videoRecorder = null;
+      toSW({ type: 'audio-warn', meetingId: msg.meetingId,
+        error: 'Rekaman video gagal dimulai (' + e.message + ') — rekaman audio & transkrip jalan terus.' });
+    }
+  }
   rotateTimer = setInterval(rotateChunk, msg.chunkMs);
 }
 
-// Satu chunk → {segments}. Mode browser jalan lokal di CPU (transformers.js +
-// WASM), mode lain upload ke endpoint OpenAI-compatible.
-async function transcribeOne(blob, c, i, total) {
-  if (c.sttMode === 'browser') {
-    // Dynamic import: whisper-browser.js ES module dan bundle-nya besar —
-    // jangan dibaca sama sekali kalau mode STT bukan browser.
-    const m = await import(chrome.runtime.getURL('lib/whisper-browser.js'));
-    return m.transcribe(blob, {
-      language: c.sttLanguage,
-      model: c.sttBrowserModel,
-      // Unduhan model pertama kali ratusan MB tanpa tanda apa pun di UI —
-      // tanpa ini user melihat "Mentranskrip…" diam bermenit-menit.
-      onProgress: (note) => toSW({ type: 'audio-progress', meetingId: c.meetingId, done: i, total, note }),
-    });
-  }
+// Satu chunk → {segments}, upload ke endpoint OpenAI-compatible.
+function transcribeOne(blob, c) {
   return globalThis.MeetOpenAI.transcribeAudio({
     blob, baseUrl: c.baseUrl, apiKey: c.apiKey,
     model: c.sttModel, language: c.sttLanguage,
@@ -133,7 +174,7 @@ async function transcribeChunks(blobs, c, replace) {
   for (let i = 0; i < blobs.length; i++) {
     toSW({ type: 'audio-progress', meetingId: c.meetingId, done: i, total: blobs.length });
     try {
-      results.push(await transcribeOne(blobs[i], c, i, blobs.length));
+      results.push(await transcribeOne(blobs[i], c));
     } catch (e) {
       results.push({ error: e.message });
     }
@@ -165,29 +206,32 @@ async function stopAndTranscribe() {
     clearInterval(rotateTimer);
     rotateTimer = null;
     stopSilenceWatch();
-    // Finalisasi chunk terakhir (tunggu onstop), tapi jangan tanpa batas:
-    // kalau tab dibongkar di saat yang salah, event 'stop' bisa tak pernah
-    // datang — promise menggantung, finally tak jalan, dan busy macet true:
-    // stop & transkrip ulang ditolak selamanya sampai browser di-restart.
-    const pending = recorder;
-    const finalized = await Promise.race([
+    // Finalisasi chunk terakhir (tunggu event 'stop'), tapi jangan tanpa batas:
+    // kalau tab dibongkar di saat yang salah, event itu bisa tak pernah datang
+    // — promise menggantung, finally tak jalan, dan busy macet true: stop &
+    // transkrip ulang ditolak selamanya sampai browser di-restart.
+    // Timeout → false; handler recorder-nya WAJIB dilepas pemanggil: event yang
+    // datang belakangan menulis ke chunkBlobs/IndexedDB yang sudah ditukar atau
+    // sudah selesai ditunggu — hasilnya transkrip/file yang diam-diam tanggung.
+    const stopAndWait = (rec) => Promise.race([
       new Promise((resolve) => {
-        if (!recorder || recorder.state === 'inactive') return resolve(true);
-        recorder.addEventListener('stop', () => resolve(true), { once: true });
-        recorder.stop();
+        if (!rec || rec.state === 'inactive') return resolve(true);
+        rec.addEventListener('stop', () => resolve(true), { once: true });
+        rec.stop();
       }),
-      new Promise((resolve) => setTimeout(() => resolve(false), 5000)), // 5s cukup untuk finalisasi satu chunk
+      new Promise((resolve) => setTimeout(() => resolve(false), 5000)), // 5s cukup untuk finalisasi satu potongan
     ]);
-    // Timeout: chunk terakhir (sampai chunkMs = 10 menit audio) tidak masuk
-    // chunkBlobs. Jangan diam — user harus tahu ujung rekaman hilang.
-    if (!finalized) {
-      // onstop dilepas: kalau ia datang belakangan, handler-nya mendorong
-      // potongan ke chunkBlobs yang sudah ditukar dan menulis ke IndexedDB
-      // setelah pendingSaves selesai ditunggu — transkrip ulang nanti jadi
-      // lebih panjang dari transkrip aslinya, tanpa penjelasan apa pun.
+    const pending = recorder;
+    if (!await stopAndWait(pending)) {
       if (pending) pending.onstop = null;
       toSW({ type: 'audio-warn', meetingId: cfg?.meetingId,
         error: 'Potongan terakhir gagal difinalisasi — bagian akhir rekaman mungkin hilang.' });
+    }
+    const vPending = videoRecorder;
+    if (!await stopAndWait(vPending)) {
+      vPending.ondataavailable = null;
+      toSW({ type: 'audio-warn', meetingId: cfg?.meetingId,
+        error: 'Potongan video terakhir gagal difinalisasi — ujung video mungkin hilang.' });
     }
     // Chunk sudah disimpan sambil jalan (onstop), tinggal tunggu tulisan
     // terakhir mendarat supaya "Transkrip ulang" & "Unduh audio" melihat
@@ -196,7 +240,7 @@ async function stopAndTranscribe() {
     pendingSaves = [];
     stream?.getTracks().forEach((t) => t.stop());
     await audioCtx?.close().catch(() => {});
-    audioCtx = null; stream = null; recorder = null;
+    audioCtx = null; stream = null; recorder = null; videoRecorder = null;
 
     const blobs = chunkBlobs;
     chunkBlobs = [];

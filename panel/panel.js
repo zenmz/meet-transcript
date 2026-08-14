@@ -72,7 +72,7 @@ chrome.runtime.onMessage.addListener((msg) => {
     const wasActive = recState.recording || recState.transcribing;
     if (wasActive !== (msg.recording || msg.transcribing)) audioMetaKey = null;
     recState = { recording: msg.recording, transcribing: msg.transcribing,
-      done: msg.done ?? 0, total: msg.total ?? 0, note: msg.note ?? null,
+      done: msg.done ?? 0, total: msg.total ?? 0,
       // 'error' in msg, bukan msg.error ?? null: broadcast progress tidak
       // membawa field error sama sekali, dan menganggapnya null menghapus
       // peringatan yang baru saja terbit (mis. "belum ada suara masuk") begitu
@@ -94,6 +94,17 @@ async function getMeeting(id) {
 
 const safeName = (s) => s.replace(/[\/\\:*?"<>|]/g, '-');
 
+// Mode STT "Whisper di browser" (WASM in-extension) sudah dihapus. sttMode()
+// menurunkan ulang settings lama secara diam-diam, dan diam itu masalahnya:
+// user yang dulu full-offline (tanpa server STT, tanpa izin origin localhost)
+// baru menemukan modenya hilang lewat rekaman pertama yang gagal transkrip.
+// Peringatan ini hilang sendiri begitu user menekan Simpan di Settings —
+// doSave menulis mode hasil resolusi, jadi tak perlu state "sudah dibaca".
+const sttModeRemoved = () => settingsCache.sttMode === 'browser';
+const STT_REMOVED_NOTE = 'Mode "Whisper di browser" sudah dihapus di versi ini. '
+  + 'Setelan STT-mu dipindah otomatis ke server/API — buka Settings, cek Mode STT '
+  + 'dan STT Base URL, lalu Simpan sebelum merekam.';
+
 // Prompt MoM lengkap (template + transkrip) untuk paste ke AI web tanpa API key.
 const promptText = (meeting) => M.fillTemplate(
   settingsCache.momTemplate || M.DEFAULT_MOM_TEMPLATE,
@@ -106,17 +117,6 @@ function download(name, data) {
   a.click();
   // Revoke ditunda: dialog "Save as" baru membaca blob setelah click() kembali.
   setTimeout(() => URL.revokeObjectURL(a.href), 60000);
-}
-
-// Sudah pernah diunduh belum? Baca Cache API langsung, jangan import
-// whisper-browser.js — itu mem-parse bundle 877 KB + init ORT cuma untuk satu
-// pertanyaan status. Dicocokkan lewat pola URL, bukan nama file persis: nama
-// file bobot ikut dtype, jadi keputusan dtype tak perlu disalin ke sini.
-// Dua .onnx = encoder + decoder; satu saja berarti unduhan putus di tengah.
-async function modelCached(model) {
-  if (!globalThis.caches) return false;
-  const keys = await (await caches.open('transformers-cache')).keys();
-  return keys.filter((r) => r.url.includes(model) && r.url.endsWith('.onnx')).length >= 2;
 }
 
 // Tiap chunk adalah file webm berdiri sendiri (satu MediaRecorder per chunk),
@@ -141,6 +141,18 @@ async function downloadAudio(meeting) {
       : `${meeting.title}.webm`,
     blob));
   return saved.blobs.length;
+}
+
+// Kebalikan audio: part video BUKAN file berdiri sendiri — gabungan berurutan
+// seluruh part = satu file webm valid, jadi diunduh sebagai SATU file.
+// "-video" di nama: hindari tabrakan dengan unduhan audio satu-file.
+async function downloadVideo(meeting) {
+  const saved = await globalThis.MeetAudioStore.loadVideo();
+  if (!saved?.blobs?.length) return false;
+  // Cek kepemilikan ulang — alasan sama dengan downloadAudio di atas.
+  if (saved.meetingId !== meeting.id) return false;
+  download(`${meeting.title}-video.webm`, new Blob(saved.blobs, { type: 'video/webm' }));
+  return true;
 }
 
 // Epoch guard: render async saling balapan (klik tab vs broadcast SW);
@@ -196,11 +208,8 @@ async function renderMeeting(id, live, epoch) {
   if (live && HAS_AUDIO) {
     const bar = el('div', 'actions');
     if (recState.transcribing) {
-      // note = kabar dari mode browser (unduh model bisa bermenit-menit tanpa
-      // perubahan angka chunk sama sekali).
       bar.append(el('span', 'muted',
-        recState.note ? `Mentranskrip… ${recState.note}`
-          : recState.total ? `Mentranskrip… ${recState.done}/${recState.total}` : 'Mentranskrip…'));
+        recState.total ? `Mentranskrip… ${recState.done}/${recState.total}` : 'Mentranskrip…'));
     } else if (recState.recording) {
       const stop = el('button', null, 'Stop rekam');
       stop.addEventListener('click', () => chrome.runtime.sendMessage({ type: 'stop-recording' }));
@@ -208,9 +217,10 @@ async function renderMeeting(id, live, epoch) {
     } else {
       // tabCapture butuh invocation activeTab yang tidak diberikan tombol side
       // panel (batasan Chrome) — start dipicu dari context menu halaman Meet.
-      bar.append(el('span', 'muted', 'Untuk mulai: klik kanan di halaman Meet → "Rekam audio meeting".'));
+      bar.append(el('span', 'muted', 'Untuk mulai: klik kanan di halaman Meet → "Rekam audio meeting" (atau "Rekam audio + video meeting").'));
     }
     if (recState.error) bar.append(el('div', 'err', ' ' + recState.error));
+    if (sttModeRemoved()) bar.append(el('div', 'warn', STT_REMOVED_NOTE));
     view.append(bar);
   }
 
@@ -320,44 +330,59 @@ async function renderMeeting(id, live, epoch) {
   // Tombol audio disembunyikan selama rekam/transkrip (SW menolak kliknya), tapi
   // di tab Riwayat tidak ada bar progres seperti di Live — tanpa baris ini,
   // "Transkrip ulang" yang diklik dari sini membuat seluruh blok tombol LENYAP
-  // tanpa kabar apa pun sampai selesai (mode browser: bermenit-menit).
+  // tanpa kabar apa pun sampai selesai.
   if (!live && recState.transcribing && audioMeta?.meetingId === meeting.id) {
     actions.append(el('span', 'muted',
-      recState.note ? `Mentranskrip… ${recState.note}`
-        : recState.total ? `Mentranskrip… ${recState.done}/${recState.total}` : 'Mentranskrip…'));
+      recState.total ? `Mentranskrip… ${recState.done}/${recState.total}` : 'Mentranskrip…'));
   }
-  // count 0 = beginAudio sudah menulis meta tapi belum ada satu potongan pun
-  // (rekaman mati sebelum rotasi pertama). Menawarkan Unduh/Transkrip ulang di
-  // situ hanya berujung "Audio rekaman tidak tersimpan lagi".
-  if (audioMeta?.meetingId === meeting.id && audioMeta.count > 0
+  // Gate audio (count) dan video (videoCount) DIPISAH: part video mendarat
+  // tiap 60 detik, chunk audio baru tiap rotasi 10 menit — rekaman yang mati
+  // di menit 5 punya video tersimpan tapi count audio masih 0, dan gate
+  // gabungan menyembunyikan video yang sebenarnya bisa diselamatkan.
+  if (audioMeta?.meetingId === meeting.id && (audioMeta.count > 0 || audioMeta.videoCount > 0)
     && !recState.recording && !recState.transcribing) {
-    // Chunk disimpan sambil merekam, jadi tombol ini juga jalur penyelamat
-    // kalau rekaman mati di tengah (browser ditutup) atau STT gagal total:
-    // audionya tetap utuh sampai potongan terakhir yang sempat ditulis.
-    const dlBtn = btn(`Unduh audio${audioMeta.count > 1 ? ` (${audioMeta.count} file)` : ''}`, async () => {
-      dlBtn.disabled = true;
-      const n = await downloadAudio(meeting).catch(() => 0);
-      dlBtn.textContent = n ? `Diunduh ✓${n > 1 ? ` (${n} file)` : ''}` : 'Audio tidak ditemukan';
-      dlBtn.disabled = false;
-    }, more);
-    // Chrome memblok unduhan beruntun sampai user mengizinkan sekali — tanpa
-    // keterangan ini, file ke-2 dst tampak hilang begitu saja. Ikut ke dalam
-    // <details>, bukan ke baris utama: keterangannya tak ada gunanya kalau
-    // tombol yang dijelaskan sedang tersembunyi.
-    if (audioMeta.count > 1) more.append(el('span', 'muted',
-      'Beberapa file: izinkan "Download multiple files" kalau Chrome bertanya.'));
-    const reBtn = btn('Transkrip ulang', async () => {
-      reBtn.disabled = true;
-      reBtn.textContent = 'Mentranskrip…';
-      momErrors.delete(meeting.id);
-      const res = await chrome.runtime.sendMessage(
-        { type: 'regenerate-transcript', id: meeting.id }).catch(() => null);
-      if (!res?.ok) {
-        momErrors.set(meeting.id, res?.error ?? 'Gagal menghubungi service worker.');
-        render();
-      }
-      // Sukses: hasil datang lewat broadcast meeting-updated, panel rerender sendiri.
-    });
+    // count 0 = beginAudio sudah menulis meta tapi belum ada satu potongan pun
+    // (rekaman mati sebelum rotasi pertama). Menawarkan Unduh/Transkrip ulang
+    // di situ hanya berujung "Audio rekaman tidak tersimpan lagi".
+    if (audioMeta.count > 0) {
+      // Chunk disimpan sambil merekam, jadi tombol ini juga jalur penyelamat
+      // kalau rekaman mati di tengah (browser ditutup) atau STT gagal total:
+      // audionya tetap utuh sampai potongan terakhir yang sempat ditulis.
+      const dlBtn = btn(`Unduh audio${audioMeta.count > 1 ? ` (${audioMeta.count} file)` : ''}`, async () => {
+        dlBtn.disabled = true;
+        const n = await downloadAudio(meeting).catch(() => 0);
+        dlBtn.textContent = n ? `Diunduh ✓${n > 1 ? ` (${n} file)` : ''}` : 'Audio tidak ditemukan';
+        dlBtn.disabled = false;
+      }, more);
+      // Chrome memblok unduhan beruntun sampai user mengizinkan sekali — tanpa
+      // keterangan ini, file ke-2 dst tampak hilang begitu saja. Ikut ke dalam
+      // <details>, bukan ke baris utama: keterangannya tak ada gunanya kalau
+      // tombol yang dijelaskan sedang tersembunyi.
+      if (audioMeta.count > 1) more.append(el('span', 'muted',
+        'Beberapa file: izinkan "Download multiple files" kalau Chrome bertanya.'));
+    }
+    if (audioMeta.videoCount > 0) {
+      const vBtn = btn('Unduh video', async () => {
+        vBtn.disabled = true;
+        const ok = await downloadVideo(meeting).catch(() => false);
+        vBtn.textContent = ok ? 'Diunduh ✓' : 'Video tidak ditemukan';
+        vBtn.disabled = false;
+      }, more);
+    }
+    if (audioMeta.count > 0) {
+      const reBtn = btn('Transkrip ulang', async () => {
+        reBtn.disabled = true;
+        reBtn.textContent = 'Mentranskrip…';
+        momErrors.delete(meeting.id);
+        const res = await chrome.runtime.sendMessage(
+          { type: 'regenerate-transcript', id: meeting.id }).catch(() => null);
+        if (!res?.ok) {
+          momErrors.set(meeting.id, res?.error ?? 'Gagal menghubungi service worker.');
+          render();
+        }
+        // Sukses: hasil datang lewat broadcast meeting-updated, panel rerender sendiri.
+      });
+    }
   }
   view.append(actions);
   // <details> native: disclosure yang benar tanpa satu baris JS pun untuk
@@ -458,7 +483,6 @@ async function renderSettings(epoch) {
     Object.assign(document.createElement('select'), { innerHTML: '' }));
   for (const [val, label] of [
     ['whisper-local', 'Whisper lokal (server sendiri)'],
-    ['browser', 'Whisper di browser (offline, tanpa server)'],
     ['api', '9Router / STT API'],
   ]) {
     sttModeSel.append(Object.assign(document.createElement('option'), { value: val, textContent: label }));
@@ -472,27 +496,16 @@ async function renderSettings(epoch) {
       + '(whisper.cpp, faster-whisper, dll) di URL di bawah. Audio tidak keluar dari '
       + 'jaringanmu, tapi servernya harus sudah jalan sebelum mulai merekam — kalau mati, '
       + 'transkrip gagal dan audionya tersimpan untuk diulang.',
-    browser: 'Whisper jalan di dalam Chrome: tanpa server, tanpa API key, audio tidak '
-      + 'pernah keluar dari komputer ini. Model diunduh sekali dari HuggingFace lalu '
-      + 'dipakai offline selamanya. Jalan di CPU lewat WASM, jadi jauh lebih lambat '
-      + 'daripada endpoint API — untuk meeting panjang pakai mode 9Router. Bahasa '
-      + 'dikunci Indonesia. Kalau hasilnya salah dengar, naikkan ukuran model di bawah: '
-      + 'itu satu-satunya tuas akurasi yang ada di mode ini.',
   };
   const sttInfo = el('div', 'info');
   view.append(sttInfo);
-
-  // Ukuran model = tuas akurasi mode browser. Dipisah dari "Model STT" (mode
-  // api) karena nilainya bukan teks bebas: hanya repo Xenova/whisper-* yang
-  // punya bobot ONNX q8, jadi dropdown, bukan input.
-  const sttBrowserModel = field('Model Whisper di browser',
-    Object.assign(document.createElement('select'), { innerHTML: '' }));
-  for (const [val, label] of ST.BROWSER_MODELS) {
-    sttBrowserModel.append(Object.assign(document.createElement('option'), { value: val, textContent: label }));
-  }
-  sttBrowserModel.value = settings.sttBrowserModel ?? ST.DEFAULT_BROWSER_MODEL;
-  const modelRow = el('div', 'actions');
-  view.append(modelRow);
+  // Dicat di sini juga, bukan cuma di tab Live: Settings adalah tempat
+  // memperbaikinya, dan dropdown di atas sudah terlanjur menampilkan mode
+  // hasil resolusi seolah-olah itu memang pilihan user selama ini. Dibaca
+  // dari `settings` (storage segar), bukan settingsCache — view ini tidak
+  // ikut dirender ulang oleh onChanged.
+  const sttRemovedNote = settings.sttMode === 'browser' ? el('div', 'warn', STT_REMOVED_NOTE) : null;
+  if (sttRemovedNote) view.append(sttRemovedNote);
 
   // Kosong TIDAK ditampilkan apa adanya untuk whisper-local: sttEndpoint
   // memakai WHISPER_DEFAULT kalau URL-nya kosong, jadi field kosong berarti UI
@@ -508,72 +521,6 @@ async function renderSettings(epoch) {
     Object.assign(document.createElement('input'), { value: settings.sttModel ?? ST.DEFAULT_API_MODEL }));
   const sttLanguage = field('Bahasa STT (mis. id, en — kosong = auto)',
     Object.assign(document.createElement('input'), { value: settings.sttLanguage ?? ST.DEFAULT_LANGUAGE }));
-  // Modul whisper ES module & bundle-nya besar — dimuat hanya kalau mode
-  // browser benar-benar dipilih, bukan tiap kali tab Settings dibuka.
-  const whisperMod = () => import(chrome.runtime.getURL('lib/whisper-browser.js'));
-
-  // Digambar ulang tiap kali mode berubah, jadi pass yang kalah balapan tidak
-  // boleh menempelkan tombolnya ke baris yang sudah dikosongkan pass berikutnya.
-  let modelRowEpoch = 0;
-  async function refreshModelRow() {
-    const mine = ++modelRowEpoch;
-    modelRow.replaceChildren();
-    if (!audioMode() || sttModeSel.value !== 'browser') return;
-    // Dibaca sekali di awal: user bisa mengganti dropdown selagi pemeriksaan
-    // berjalan, dan pass ini harus melaporkan model yang IA periksa.
-    const chosen = sttBrowserModel.value;
-    modelRow.append(el('span', 'muted', 'Memeriksa model…'));
-    const ready = await modelCached(chosen).catch(() => false);
-    if (mine !== modelRowEpoch) return;
-    modelRow.replaceChildren();
-    if (ready) {
-      modelRow.append(el('span', 'ok', '✓ Model sudah diunduh — transkrip jalan offline.'));
-      return;
-    }
-    const dl = el('button', null, 'Unduh model sekarang');
-    const status = el('span', 'muted', '');
-    dl.addEventListener('click', async () => {
-      dl.disabled = true;
-      status.className = 'muted';
-      status.textContent = ' menyiapkan…';
-      try {
-        const m = await whisperMod();
-        // preload membangun pipeline penuh, bukan cuma mengunduh file: sekalian
-        // membuktikan model benar-benar jalan di mesin ini sebelum dipakai
-        // di meeting sungguhan.
-        await m.preload(chosen, (note) => { if (mine === modelRowEpoch) status.textContent = ' ' + note; });
-        // Epoch dicek SETELAH unduhan yang bisa bermenit-menit: user bisa
-        // mengganti dropdown di tengah jalan, dan barisnya sudah digambar ulang
-        // untuk model lain. Tanpa cek ini, "✓ Model siap" milik Small mendarat
-        // di baris milik Tiny — user menyimpan Tiny dan meeting pertamanya
-        // berhenti mengunduh dari nol.
-        if (mine !== modelRowEpoch) return;
-        // preload yang sukses cuma membuktikan modelnya BISA JALAN, bukan bahwa
-        // ia TERSIMPAN. Kalau Cache API menolak menulis (kuota, storage
-        // dibersihkan), transformers.js cuma console.warn dan semuanya tetap
-        // terlihat berhasil — padahal 80 MB itu akan diunduh ulang tiap sesi.
-        // Jangan menjanjikan "offline" tanpa memastikan filenya benar-benar ada.
-        if (await modelCached(chosen).catch(() => false)) {
-          modelRow.replaceChildren(el('span', 'ok', '✓ Model siap — transkrip jalan offline.'));
-        } else {
-          dl.disabled = false;
-          status.className = 'err';
-          status.textContent = ' Model jalan, tapi gagal tersimpan di cache browser — akan diunduh ulang tiap sesi.';
-        }
-      } catch (e) {
-        if (mine !== modelRowEpoch) return; // baris ini sudah diganti pass lain
-        dl.disabled = false;
-        status.className = 'err';
-        status.textContent = ' Gagal: ' + (e?.message || e);
-        // Unduhan model gagal di dalam bundle vendor yang ter-minify: tanpa
-        // stack lengkap yang terlihat, pesannya hilang dan yang tersisa cuma
-        // nama fungsi satu huruf di halaman Errors.
-        reportError('Unduh model gagal', e);
-      }
-    });
-    modelRow.append(dl, status, el('span', 'muted',
-      'Sekali saja. Kalau dilewati, unduhannya jalan otomatis saat transkrip pertama.'));
-  }
 
   // Mode menentukan field mana yang relevan. URL/key/model/bahasa tetap
   // tersimpan walau tersembunyi supaya pindah mode bolak-balik tidak
@@ -585,22 +532,15 @@ async function renderSettings(epoch) {
     // tersimpan tidak hangus saat Simpan di Firefox) — cuma barisnya yang hilang.
     show(source, HAS_AUDIO);
     show(sttModeSel, audio);
-    show(sttBaseUrl, audio && m !== 'browser');
+    show(sttBaseUrl, audio);
     show(sttApiKey, audio && m === 'api');
     show(sttModel, audio && m === 'api');
     // whisper-local IKUT mengirim language ke servernya (sttEndpoint), jadi
     // menyembunyikan field-nya berarti nilainya dipakai tapi tak bisa diubah.
-    // Hanya mode browser yang benar-benar mengunci bahasa.
-    show(sttLanguage, audio && m !== 'browser');
-    show(sttBrowserModel, audio && m === 'browser');
+    show(sttLanguage, audio);
     const info = audio && INFO[m];
     sttInfo.textContent = info ? 'ⓘ ' + INFO[m] : '';
     sttInfo.hidden = !info;
-    // Dikosongkan refreshModelRow, tapi div .actions yang kosong tetap membawa
-    // margin 8px atas-bawah — jadi tetap perlu disembunyikan, bukan cuma
-    // dikosongkan, supaya tidak menyisakan celah tanpa isi.
-    modelRow.hidden = !(audio && m === 'browser');
-    refreshModelRow();
   }
   // Pindah sumber transkrip menyembunyikan/memunculkan seluruh blok STT.
   source.addEventListener('change', applyMode);
@@ -610,43 +550,24 @@ async function renderSettings(epoch) {
   // sudah diketik lenyap dalam sekali klik, dan kalau lalu ditekan Simpan yang
   // tersimpan adalah kosong — persis seperti "STT Base URL tidak disimpan".
   const urlByMode = { 'whisper-local': ST.WHISPER_DEFAULT, api: '' };
-  // Mode browser tidak punya URL sendiri, jadi pemilik URL tersimpan ditebak
-  // dari bentuknya (localhost = server whisper sendiri). Tanpa tebakan ini URL
-  // 9Router yang tersimpan sambil memakai mode browser selalu masuk ke bucket
-  // whisper-local: berpindah ke mode API menampilkan field KOSONG, Simpan
-  // menuliskan kosong, dan sttEndpoint lalu jatuh ke endpoint chat DENGAN API
-  // key chat — audio meeting terkirim ke sana tanpa satu pun tanda.
-  let urlMode = savedMode === 'browser'
-    ? (initialUrl && !ST.isLocalUrl(initialUrl) ? 'api' : 'whisper-local')
-    : (savedMode === 'api' ? 'api' : 'whisper-local');
+  let urlMode = savedMode === 'api' ? 'api' : 'whisper-local';
   urlByMode[urlMode] = initialUrl;
   sttModeSel.addEventListener('change', () => {
     urlByMode[urlMode] = sttBaseUrl.value.trim(); // simpan yang sedang tampil
-    const m = sttModeSel.value;
-    if (m !== 'browser') {
-      urlMode = m;
-      sttBaseUrl.value = urlByMode[m];
-    }
+    urlMode = sttModeSel.value;
+    sttBaseUrl.value = urlByMode[urlMode];
     applyMode();
   });
-  // Ganti ukuran model = pertanyaan cache yang berbeda: yang kecil bisa sudah
-  // ada sementara yang besar belum, jadi barisnya harus diperiksa ulang.
-  sttBrowserModel.addEventListener('change', refreshModelRow);
   applyMode();
 
   const note = el('span', 'muted', '');
   const setNote = (cls, text) => { note.className = cls; note.textContent = ' ' + text; };
 
   const normalizedBase = () => (baseUrl.value.trim() || DEFAULT_BASE).replace(/\/+$/, '');
-  // Yang DISIMPAN: apa adanya isi field, termasuk saat mode browser
-  // menyembunyikannya — URL whisper custom user tidak boleh hangus cuma karena
-  // ia sempat menyimpan sambil memakai mode browser.
   const sttBaseValue = () => sttBaseUrl.value.trim().replace(/\/+$/, '');
-  // Yang DIPAKAI untuk jaringan: mode browser tidak menghubungi server STT mana
-  // pun, dan sumber caption tidak menyentuh STT sama sekali — keduanya tak
-  // boleh memunculkan dialog izin host untuk server yang tidak akan dihubungi.
-  const sttBaseForNetwork = () =>
-    (!audioMode() || sttModeSel.value === 'browser' ? '' : sttBaseValue());
+  // Yang DIPAKAI untuk jaringan: sumber caption tidak menyentuh STT sama sekali —
+  // tak boleh memunculkan dialog izin host untuk server yang tidak akan dihubungi.
+  const sttBaseForNetwork = () => (audioMode() ? sttBaseValue() : '');
 
   // Minta izin chat + STT sekaligus: dua request permintaan berurutan di
   // satu klik kehilangan user activation di antara dialog (throw "must be
@@ -770,9 +691,13 @@ async function renderSettings(epoch) {
         sttLanguage: sttLanguage.value.trim(),
         sttBaseUrl: sttBaseValue(),
         sttApiKey: sttApiKey.value.trim(),
-        sttBrowserModel: sttBrowserModel.value,
       },
     });
+    // Simpan menulis mode hasil resolusi, jadi peringatan "mode browser
+    // dihapus" tidak berlaku lagi. View ini tidak dirender ulang setelah
+    // Simpan — tanpa baris ini peringatannya menetap padahal user sudah
+    // melakukan persis yang disuruh.
+    if (sttRemovedNote) sttRemovedNote.hidden = true;
     if (warning) setNote('err', `Tersimpan, tapi ${warning} Request bisa gagal.`);
     else setNote('ok', 'Tersimpan.');
   }
@@ -780,6 +705,69 @@ async function renderSettings(epoch) {
   const actions = el('div', 'actions');
   actions.append(test, save, note);
   view.append(actions);
+
+  // Backup seluruh data (riwayat+MoM+settings+rekaman terakhir) ke satu zip,
+  // dan import-nya. Satu-satunya jalur selamat data melewati uninstall.
+  view.append(el('h3', null, 'Backup'));
+  const bnote = el('span', 'muted', '');
+  const setBnote = (cls, text) => { bnote.className = cls; bnote.textContent = ' ' + text; };
+  const exportBtn = el('button', null, 'Export backup (.zip)');
+  exportBtn.addEventListener('click', async () => {
+    // Digate sama seperti import: rekaman yang sedang jalan baru menulis
+    // potongan tiap rotasi, jadi zip yang dibuat sekarang memuat rekaman
+    // separuh jadi — dan cacatnya baru ketahuan saat file itu di-restore.
+    if (recState.recording || recState.transcribing) {
+      return setBnote('err', '✗ Rekaman/transkrip sedang berjalan — backup akan memuat rekaman separuh. Stop dulu.');
+    }
+    exportBtn.disabled = true;
+    setBnote('muted', 'Menyusun zip…'); // rekaman video besar — bisa beberapa detik
+    try {
+      const zip = await globalThis.MeetBackup.exportBackup();
+      download(`meet-transcript-backup-${new Date().toISOString().slice(0, 10)}.zip`, zip);
+      setBnote('ok', `✓ Backup siap (${(zip.size / 1048576).toFixed(1)} MB).`);
+    } catch (e) {
+      setBnote('err', '✗ Export gagal: ' + (e?.message ?? e));
+    } finally {
+      exportBtn.disabled = false;
+    }
+  });
+  const importInput = Object.assign(document.createElement('input'),
+    { type: 'file', accept: '.zip,application/zip', hidden: true });
+  const importBtn = el('button', null, 'Import backup');
+  importBtn.addEventListener('click', () => { importInput.value = ''; importInput.click(); });
+  importInput.addEventListener('change', async () => {
+    const file = importInput.files?.[0];
+    if (!file) return;
+    // Import men-clear storage — rekaman/transkrip yang sedang berjalan akan
+    // menulis ke record yang barusan dihapus/diganti. Tolak, jangan menunggu.
+    if (recState.recording || recState.transcribing) {
+      return setBnote('err', '✗ Rekaman/transkrip sedang berjalan — stop dulu sebelum import.');
+    }
+    if (!confirm('Import MENGGANTI seluruh data sekarang (riwayat, settings, rekaman tersimpan). Lanjut?')) return;
+    importBtn.disabled = true;
+    setBnote('muted', 'Mengimpor…');
+    try {
+      const r = await globalThis.MeetBackup.importBackup(file);
+      await loadSettings();
+      audioMetaKey = null; // cache meta lama tidak berlaku lagi
+      // Rekaman gagal di-restore TIDAK dilaporkan sebagai "import gagal":
+      // transkrip & settings sudah masuk, dan menyebutnya gagal membuat user
+      // mengira data lamanya masih utuh — padahal sudah tertimpa.
+      alert(r.audioError
+        ? `Import selesai SEBAGIAN: ${r.meetings} meeting masuk, tapi rekaman audio/video gagal di-restore (${r.audioError}). Data lama sudah tergantikan.`
+        : `Import selesai: ${r.meetings} meeting, ${r.chunks} potongan rekaman.`);
+      // Render ulang WAJIB: form masih berisi nilai pra-import, dan "Simpan"
+      // dari form basi itu menimpa settings yang barusan di-import.
+      render();
+    } catch (e) {
+      setBnote('err', '✗ Import gagal: ' + (e?.message ?? e));
+    } finally {
+      importBtn.disabled = false;
+    }
+  });
+  const backupRow = el('div', 'actions');
+  backupRow.append(exportBtn, importBtn, importInput, bnote);
+  view.append(backupRow);
 }
 
 chrome.storage.onChanged.addListener((c, area) => {

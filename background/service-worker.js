@@ -66,7 +66,7 @@ async function ensureOffscreen() {
   await chrome.offscreen.createDocument({
     url: 'offscreen/offscreen.html',
     reasons: ['USER_MEDIA'],
-    justification: 'Merekam audio tab Meet untuk transkrip.',
+    justification: 'Merekam audio/video tab Meet untuk transkrip dan rekaman.',
   });
 }
 
@@ -90,13 +90,17 @@ if (chrome.tabCapture) {
     chrome.contextMenus.removeAll(() => {
       chrome.contextMenus.create({ id: 'rec-start', title: 'Rekam audio meeting',
         contexts: ['page'], documentUrlPatterns: ['https://meet.google.com/*'] });
-      chrome.contextMenus.create({ id: 'rec-stop', title: 'Stop rekam audio',
+      // Video opsional & menu terpisah: ±250 MB/jam vs ±30 MB/jam audio saja —
+      // user yang cuma butuh transkrip tak boleh membayar disk sebesar itu.
+      chrome.contextMenus.create({ id: 'rec-start-video', title: 'Rekam audio + video meeting',
+        contexts: ['page'], documentUrlPatterns: ['https://meet.google.com/*'] });
+      chrome.contextMenus.create({ id: 'rec-stop', title: 'Stop rekam',
         contexts: ['page'], documentUrlPatterns: ['https://meet.google.com/*'] });
     });
   });
 
   chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-    if (info.menuItemId === 'rec-start') {
+    if (info.menuItemId === 'rec-start' || info.menuItemId === 'rec-start-video') {
       // Cek sebelum getMediaStreamId: klik saat sudah merekam tak boleh masuk
       // catch (yang akan reset state palsu padahal rekaman jalan terus).
       if (rec.recording || rec.transcribing || await hasOffscreen()) {
@@ -115,7 +119,8 @@ if (chrome.tabCapture) {
       }
       try {
         const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
-        await startRecording({ streamId, meetingId, title: titleFromTab(tab?.title, meetingId) });
+        await startRecording({ streamId, meetingId, title: titleFromTab(tab?.title, meetingId),
+          video: info.menuItemId === 'rec-start-video' });
       } catch (e) {
         // TIDAK mereset rec di sini: klik kedua yang ditolak karena rekaman
         // pertama sedang jalan juga mendarat di sini, dan resetnya akan mematikan
@@ -137,7 +142,7 @@ async function sttConfig() {
   const stt = globalThis.MeetStt.sttEndpoint(settings);
   return {
     sttMode: stt.mode, baseUrl: stt.baseUrl, apiKey: stt.apiKey,
-    sttModel: stt.model, sttLanguage: stt.language, sttBrowserModel: stt.sttBrowserModel,
+    sttModel: stt.model, sttLanguage: stt.language,
   };
 }
 
@@ -147,7 +152,7 @@ async function sttConfig() {
 // tanpa badge, tanpa tombol Stop, dan semua start berikutnya ditolak.
 let startPromise = null;
 
-async function startRecording({ streamId, meetingId, title }) {
+async function startRecording({ streamId, meetingId, title, video }) {
   // Guard + klaim SINKRON, sebelum await mana pun: dua klik context menu
   // beruntun sama-sama lolos pre-check di pemanggil (yang punya await sendiri),
   // dan tanpa klaim di sini keduanya masuk dan yang kedua merusak state yang
@@ -158,7 +163,7 @@ async function startRecording({ streamId, meetingId, title }) {
   updateBadge();
   startPromise = (async () => {
     if (await hasOffscreen()) throw new Error('Rekaman masih berjalan.');
-    await startRecordingInner({ streamId, meetingId, title, baseTime });
+    await startRecordingInner({ streamId, meetingId, title, baseTime, video });
   })();
   try {
     await startPromise;
@@ -176,7 +181,7 @@ async function startRecording({ streamId, meetingId, title }) {
   }
 }
 
-async function startRecordingInner({ streamId, meetingId, title, baseTime }) {
+async function startRecordingInner({ streamId, meetingId, title, baseTime, video }) {
   const stt = await sttConfig();
   await ensureOffscreen();
   // error: null eksplisit — panel mempertahankan error/peringatan terakhir
@@ -194,7 +199,7 @@ async function startRecordingInner({ streamId, meetingId, title, baseTime }) {
   // berikutnya ditolak selamanya padahal tidak ada yang merekam.
   const res = await chrome.runtime.sendMessage({
     target: 'offscreen', op: 'start', streamId, meetingId, ...stt,
-    chunkMs: 600000, baseTime,
+    chunkMs: 600000, baseTime, video: !!video,
   }).catch((e) => ({ ok: false, error: e.message }));
   if (!res?.ok) throw new Error('Offscreen tidak merespons — rekaman tidak dimulai.');
   // Dicatat SETELAH start dikonfirmasi: start yang gagal tidak boleh membalik
@@ -323,7 +328,7 @@ async function ensureMeeting({ meetingId, title, startedAt }) {
 // Sengaja TANPA archiveIfStale: transkrip ini milik sesi yang BARU berakhir,
 // dan transkrip ulang dari arsip datang dengan id arsipnya sendiri (audio meta
 // ikut di-retag saat pengarsipan). Kasus sebaliknya ditangani redirect di
-// bawah: STT browser bisa menggiling >30 menit, dan selama itu ruangnya bisa
+// bawah: STT bisa menggiling >30 menit (server lokal lambat), dan selama itu ruangnya bisa
 // keburu diarsip lalu dipakai occurrence baru — tanpa redirect, transkrip
 // sesi LAMA mendarat di record sesi baru (persis bug yang commit ini perbaiki,
 // lewat pintu samping).
@@ -583,7 +588,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       rec = { recording: false, transcribing: true, meetingId: msg.meetingId ?? rec.meetingId };
       updateBadge();
     }
-    broadcastRec({ done: msg.done, total: msg.total, note: msg.note });
+    broadcastRec({ done: msg.done, total: msg.total });
     return false;
   }
   if (msg.type === 'audio-transcript') {

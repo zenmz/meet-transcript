@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Meet Transcript",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Transkrip Google Meet dari caption, lalu jadi Minutes of Meeting. Versi Firefox: caption-only (tanpa rekam audio).",
   "browser_specific_settings": {
     "gecko": {
@@ -14,14 +14,9 @@
   "host_permissions": [
     "https://meet.google.com/*",
     "https://api.openai.com/*",
-    "https://gemini.google.com/*",
-    "https://huggingface.co/*",
-    "https://*.hf.co/*"
+    "https://gemini.google.com/*"
   ],
   "optional_host_permissions": ["https://*/*", "http://*/*"],
-  "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
-  },
   "background": {
     "scripts": ["lib/merge.js", "lib/openai.js", "lib/stt.js", "lib/audiostore.js", "background/service-worker.js"]
   },

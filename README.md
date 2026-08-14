@@ -10,15 +10,17 @@
 
 **Meet Transcript** adalah ekstensi Google Chrome yang terintegrasi langsung pada *side panel* Google Meet. Ekstensi ini menangkap transkrip caption secara *real-time* selama rapat berlangsung dan secara otomatis merangkumnya menjadi *Minutes of Meeting* (MoM). Transkrip dari rekaman audio muncul setelah perekaman dihentikan.
 
-Seluruh data rapat disimpan secara lokal di peramban (*browser*) Anda. Tanpa server perantara, dan Anda memiliki kendali penuh atas *endpoint* STT (Speech-to-Text) maupun LLM (Large Language Model) yang digunakan — transkripsi bahkan dapat berjalan sepenuhnya luring di dalam Chrome. Baca bagian [Keamanan & Privasi](#-keamanan--privasi) untuk mengetahui persis data apa yang keluar pada tiap mode.
+Seluruh data rapat disimpan secara lokal di peramban (*browser*) Anda. Tanpa server perantara, dan Anda memiliki kendali penuh atas *endpoint* STT (Speech-to-Text) maupun LLM (Large Language Model) yang digunakan — termasuk *server* Whisper di jaringan Anda sendiri. Baca bagian [Keamanan & Privasi](#-keamanan--privasi) untuk mengetahui persis data apa yang keluar pada tiap mode.
 
 ## ✨ Fitur Utama
 
 * **Multi-Sumber Transkripsi:** Menggabungkan *caption* bawaan Google Meet (menyertakan nama pembicara) dan rekaman audio *tab* (via STT) dalam satu linimasa rapat, diurutkan menurut waktu.
-* **Dukungan Luring (Offline):** Whisper dapat berjalan di dalam peramban lewat WASM — model diunduh sekali dari Hugging Face, setelah itu transkripsi sepenuhnya luring. Alternatifnya, arahkan ke *server* Whisper pribadi Anda.
-* **Pembuatan MoM Otomatis:** Menghasilkan ringkasan, poin pembahasan, keputusan, dan *action items* menggunakan *endpoint* LLM yang kompatibel dengan OpenAI (misal: `gpt-4o-mini`). *Template* dapat dikustomisasi.
+* **Rekam Video (Opsional):** Rekam isi *tab* Meet sebagai satu fail `.webm` (720p, VP9, ±250 MB/jam) lewat menu klik kanan **Rekam audio + video meeting** — transkrip audio tetap berjalan seperti biasa.
+* **Endpoint STT Milik Anda:** Arahkan ke *server* Whisper pribadi (whisper.cpp, faster-whisper) di jaringan sendiri, atau ke *endpoint* STT API mana pun yang OpenAI-compatible.
+* **Pembuatan MoM Otomatis:** Menghasilkan *context*, *discussion*, peserta, dan *action items* menggunakan *endpoint* LLM yang kompatibel dengan OpenAI (misal: `gpt-4o-mini`). *Template* dapat dikustomisasi.
 * **Fleksibilitas Tanpa API Key:** Anda dapat menyalin *prompt* beserta transkrip ke *clipboard*, atau mengirimkannya secara otomatis ke Google Gemini di *tab* baru tanpa memerlukan integrasi API.
 * **Manajemen Riwayat Lokal:** Transkrip, MoM, dan setelan tersimpan di `chrome.storage.local`; potongan audio di IndexedDB. Ekspor riwayat ke `.txt` atau `.md` kapan saja.
+* **Backup & Restore:** Tombol **Export backup (.zip)** di Settings menyimpan seluruh data (riwayat, MoM, setelan, rekaman terakhir) ke satu fail ZIP; **Import backup** memulihkannya — termasuk setelah *uninstall*/pindah komputer.
 * **Sadar Rapat Berulang:** Rapat *recurring* memakai link (kode ruang) yang sama — setiap sesi tetap menjadi entri Riwayat terpisah. Jeda lebih dari 30 menit setelah rapat berakhir dianggap sesi baru; keluar-masuk sebentar tetap tersambung ke sesi yang sama.
 * **Penyelamatan Audio Cerdas:** Potongan audio disimpan ke IndexedDB selama proses perekaman. Jika terjadi kesalahan konfigurasi STT, Anda cukup melakukan "Transkrip ulang" tanpa kehilangan data audio.
 * **Siklus Hidup Otomatis:** Perekaman berhenti otomatis saat rapat selesai (keluar panggilan, pindah ruang, atau *tab* ditutup).
@@ -31,7 +33,7 @@ Ekstensi ini berjalan pada **Chrome 116+** — termasuk browser Chromium lain (E
 
 ### Metode 1: Melalui Rilis ZIP (Direkomendasikan)
 
-1. Buka halaman **[Releases](../../releases)** dan unduh aset `meet-transcript-vX.Y.Z.zip` terbaru. *(Paket ini bersih — hanya fail ekstensi, tanpa docs/test. ZIP-nya ±5 MB dan mengembang jadi ±22 MB setelah diekstrak; sebagian besar adalah runtime WASM untuk mode Whisper di Browser.)*
+1. Buka halaman **[Releases](../../releases)** dan unduh aset `meet-transcript-vX.Y.Z.zip` terbaru. *(Paket ini bersih — hanya fail ekstensi, tanpa docs/test, di bawah 1 MB.)*
 2. Ekstrak fail ZIP ke direktori permanen di komputer Anda (hindari folder *Downloads*).
 3. Buka URL `chrome://extensions` di Google Chrome (Edge: `edge://extensions`, Brave: `brave://extensions`, Opera: `opera://extensions`).
 4. Aktifkan **Developer mode** (sakelar di sudut kanan atas).
@@ -66,7 +68,7 @@ Pasang langsung dari Add-ons resmi Mozilla: **[Meet Transcript di Firefox Add-on
 
 1. **Mulai Rapat:** Bergabunglah ke Google Meet. Ekstensi akan mencoba mengaktifkan *Closed Captions* (CC) secara otomatis. Jika gagal, aktifkan manual melalui *toolbar* Meet.
 2. **Buka Panel:** Klik ikon ekstensi untuk membuka *side panel* (Firefox: *sidebar*). *Tab* **Live** akan mulai terisi secara otomatis.
-3. **Rekam Audio (Opsional):** Klik kanan pada area mana saja di halaman Meet, lalu pilih **Rekam audio meeting**.
+3. **Rekam Audio/Video (Opsional):** Klik kanan pada area mana saja di halaman Meet, lalu pilih **Rekam audio meeting** (atau **Rekam audio + video meeting** untuk ikut merekam tampilan *tab*).
 4. **Hasilkan MoM:** Setelah rapat selesai, buka *tab* **Riwayat** → pilih rapat → klik **Generate MoM**. Tombol **Unduh .txt** dan **Unduh .md** berada di dalam menu **Lainnya**.
 
 **Konfigurasi Awal (Settings):**
@@ -81,7 +83,7 @@ Anda dapat merekam audio *tab* untuk ditranskripsi via STT, baik secara mandiri 
 ### Cara Merekam Audio
 
 1. Buka menu **Settings** → set **Sumber transkrip** = *Rekam audio* agar blok **Mode STT** terlihat → konfigurasikan **Mode STT**. (Setelah dikonfigurasi, perekaman tetap bisa dipakai sambil *Sumber transkrip* dikembalikan ke *Caption Meet* — mode STT yang tersimpan tetap dipakai.)
-2. Di dalam panggilan Meet, **klik kanan** pada halaman → pilih **Rekam audio meeting**.
+2. Di dalam panggilan Meet, **klik kanan** pada halaman → pilih **Rekam audio meeting**, atau **Rekam audio + video meeting** untuk ikut merekam tampilan *tab* (720p VP9, ±250 MB/jam, diunduh sebagai satu fail `.webm` lewat tombol **Unduh video** di Riwayat).
 3. Perekaman akan berhenti otomatis jika Anda keluar dari panggilan. Anda juga dapat menghentikannya secara manual via panel atau menu klik kanan.
 
 **Catatan Penting:**
@@ -96,23 +98,10 @@ Anda dapat merekam audio *tab* untuk ditranskripsi via STT, baik secara mandiri 
 | Mode (label di UI) | Kebutuhan | Audio dikirim ke | Deskripsi |
 | --- | --- | --- | --- |
 | **Whisper lokal (server sendiri)** | Server Whisper OpenAI-compatible | URL yang **Anda** isi | **[Default]** Terisi `http://localhost:8080/v1` |
-| **Whisper di browser (offline, tanpa server)** | — | 🔒 Tidak ke mana pun | Paling privat, paling lambat. Bahasa dikunci ke Indonesia. |
 | **9Router / STT API** | URL + API Key (**wajib diisi**) | 🌐 Endpoint tersebut | Tercepat. Menyediakan opsi Model & Bahasa STT. |
 
 > [!WARNING]
 > Pada mode **9Router / STT API**, kalau **STT Base URL** dibiarkan kosong, ekstensi jatuh ke *Base URL* LLM Anda dan memakai **API key LLM** — audio rapat akan dikirim ke endpoint chat (default `https://api.openai.com/v1`). Isi STT Base URL secara eksplisit.
-
-### Detail Mode "Whisper di Browser"
-
-Mode ini menggunakan teknologi WebAssembly (WASM) untuk menjalankan model AI murni pada CPU komputer Anda. Model diunduh satu kali dari Hugging Face dan disimpan dalam *cache* peramban.
-
-| Model | Ukuran Unduhan | Akurasi (Bahasa Indonesia) | Kecepatan |
-| --- | --- | --- | --- |
-| `whisper-tiny` | ±40 MB | Rendah | Sangat Cepat |
-| `whisper-base` | ±80 MB | Rendah–Menengah (sering salah dengar) | Cepat (Default) |
-| `whisper-small` | ±250 MB | Tinggi | Lambat |
-
-> *Saran: Jika transkripsi berbahasa Indonesia kurang akurat, tingkatkan model ke `whisper-small` melalui pengaturan sebelum memeriksa komponen lainnya.*
 
 ---
 
@@ -121,10 +110,10 @@ Mode ini menggunakan teknologi WebAssembly (WASM) untuk menjalankan model AI mur
 Ekstensi ini dirancang dengan pendekatan *privacy-first*:
 
 * **Penyimpanan Lokal:** API Key Anda disimpan secara eksklusif di `chrome.storage.local` perangkat Anda dan tidak pernah dikomit ke repositori. Tidak ada telemetri maupun analitik di dalam ekstensi ini.
-* **Whisper di Browser:** satu-satunya mode yang benar-benar tidak mengirim audio ke mana pun — modelnya berjalan di dalam Chrome. Satu-satunya lalu lintas keluar adalah unduhan model dari Hugging Face, sekali saja.
 * **Whisper Lokal:** audio dikirim ke URL yang **Anda sendiri** isi di *STT Base URL* (default `http://localhost:8080/v1`). Ekstensi **tidak** memaksa URL itu benar-benar lokal — pastikan isinya memang server Anda. Bila *STT API key* pernah diisi, nilainya tetap ikut sebagai header `Authorization` walaupun field-nya tersembunyi di mode ini.
 * **Transparansi Endpoint:** MoM dihasilkan melalui *endpoint* pilihan Anda. Pastikan *endpoint* yang Anda konfigurasikan sesuai dengan kebijakan keamanan data perusahaan atau tim Anda.
 * **Copy Prompt / Kirim ke Gemini:** kedua tombol ini menyalin **seluruh transkrip** ke clipboard, dan tombol Gemini menempelkannya ke `gemini.google.com` — artinya seluruh isi rapat masuk ke akun Google Anda. Jangan gunakan untuk rapat yang isinya tidak boleh keluar.
+* **Fail Backup:** ZIP hasil **Export backup** memuat **API key Anda dalam teks polos** beserta seluruh transkrip. Simpan failnya di tempat yang aman dan jangan dibagikan.
 
 ---
 
@@ -147,8 +136,8 @@ Proyek ini dibangun tanpa *build step* yang kompleks (tanpa `npm install`), meng
 * `background/` : *Service worker*, manajemen status, penyimpanan, dan siklus hidup.
 * `content/` : Logika injeksi DOM Meet (`selectors.js`, `session.js`, `captions.js`).
 * `panel/` : Antarmuka pengguna (*Live*, *Riwayat*, *Settings*).
-* `offscreen/` : Modul perekaman audio *tab* dan orkestrasi STT (service worker MV3 bisa mati di tengah unggahan panjang).
-* `lib/` : Utilitas inti (`openai.js`, `stt.js`, `audiostore.js`/IndexedDB, `merge.js`), plus `whisper-browser.js` dan `vendor/` — transformers.js + ONNX Runtime WASM (±22 MB), mesin STT mode browser.
+* `offscreen/` : Modul perekaman audio/video *tab* dan orkestrasi STT (service worker MV3 bisa mati di tengah unggahan panjang).
+* `lib/` : Utilitas inti (`openai.js`, `stt.js`, `audiostore.js`/IndexedDB, `merge.js`).
 * `manifest.firefox.json` : manifest untuk build Firefox (`sidebar_action`, *event page*, tanpa `tabCapture`/`offscreen`) — versinya wajib sama dengan `manifest.json`.
 * `test/` · `scripts/` · `icons/` · `docs/` : pengujian Node, skrip rilis, ikon, dan catatan desain internal.
 
@@ -177,5 +166,3 @@ Membutuhkan `node` (skrip membaca versi dari `manifest.json`) dan `gh` CLI yang 
 ## 📄 Lisensi
 
 [MIT](LICENSE) © zenmz
-
-Ekstensi ini ikut mendistribusikan Transformers.js (Apache-2.0) dan ONNX Runtime Web (MIT) di dalam `lib/vendor/` untuk mode *Whisper di browser*. Rinciannya di [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

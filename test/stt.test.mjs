@@ -43,8 +43,7 @@ test('mergeSttChunks chunk error → penanda, segmen kosong dilewati', () => {
   ]);
 });
 
-const { sttMode, sttEndpoint, WHISPER_DEFAULT, DEFAULT_LANGUAGE, DEFAULT_BROWSER_MODEL,
-  BROWSER_MODELS } = globalThis.MeetStt;
+const { sttMode, sttEndpoint, WHISPER_DEFAULT, DEFAULT_LANGUAGE } = globalThis.MeetStt;
 
 test('sttMode: settings kosong (instalasi baru) → whisper-local', () => {
   assert.equal(sttMode({}), 'whisper-local');
@@ -52,8 +51,23 @@ test('sttMode: settings kosong (instalasi baru) → whisper-local', () => {
 });
 
 test('sttMode: sttMode tersimpan menang atas tebakan apa pun', () => {
-  assert.equal(sttMode({ sttMode: 'browser', sttBaseUrl: 'http://localhost:8080/v1' }), 'browser');
   assert.equal(sttMode({ sttMode: 'api', apiKey: '' }), 'api');
+});
+
+// Mode 'browser' sudah dihapus. Settings lama yang masih menyimpannya harus
+// jatuh ke aturan penurunan, bukan bocor keluar sebagai mode yang tak dikenal
+// offscreen (transkrip diam-diam dikirim entah ke mana / gagal tanpa pesan).
+test('sttMode migrasi: sttMode browser tersimpan → diturunkan ulang', () => {
+  assert.equal(sttMode({ sttMode: 'browser' }), 'whisper-local');
+  assert.equal(sttMode({ sttMode: 'browser', sttBaseUrl: 'http://localhost:8080/v1' }), 'whisper-local');
+  assert.equal(sttMode({ sttMode: 'browser', sttBaseUrl: 'https://api.openai.com/v1' }), 'api');
+  assert.equal(sttMode({ sttMode: 'browser', apiKey: 'k' }), 'api');
+});
+
+test('sttEndpoint: settings browser lama → mode http, bukan browser', () => {
+  const r = sttEndpoint({ sttMode: 'browser', sttBrowserModel: 'Xenova/whisper-small' });
+  assert.equal(r.mode, 'http');
+  assert.equal(r.baseUrl, WHISPER_DEFAULT);
 });
 
 test('sttMode migrasi: sttBaseUrl lokal → whisper-local (port apa pun)', () => {
@@ -71,26 +85,6 @@ test('sttMode migrasi: mode chat lama (endpoint chat terisi) → api, bukan whis
   // yang sama, jadi user lama tidak tiba-tiba diarahkan ke localhost.
   assert.equal(sttMode({ apiKey: 'k' }), 'api');
   assert.equal(sttMode({ baseUrl: 'https://x/v1' }), 'api');
-});
-
-test('sttEndpoint browser: tanpa URL/key, bawa model + bahasa', () => {
-  assert.deepEqual(sttEndpoint({ sttMode: 'browser' }),
-    { mode: 'browser', language: DEFAULT_LANGUAGE, sttBrowserModel: DEFAULT_BROWSER_MODEL });
-});
-
-// Ukuran model adalah satu-satunya tuas akurasi mode browser. Kalau pilihan
-// user tidak sampai ke offscreen, dropdown-nya cuma hiasan dan hasilnya tetap
-// pakai base — gagal yang sunyi.
-test('sttEndpoint browser: model pilihan user dipakai, bukan default', () => {
-  assert.equal(
-    sttEndpoint({ sttMode: 'browser', sttBrowserModel: 'Xenova/whisper-small' }).sttBrowserModel,
-    'Xenova/whisper-small');
-  // Tiap pilihan di dropdown harus benar-benar bisa dipilih lewat settings.
-  for (const [id] of BROWSER_MODELS) {
-    assert.equal(sttEndpoint({ sttMode: 'browser', sttBrowserModel: id }).sttBrowserModel, id);
-  }
-  assert.ok(BROWSER_MODELS.some(([id]) => id === DEFAULT_BROWSER_MODEL),
-    'default harus salah satu pilihan, kalau tidak dropdown-nya kosong saat dibuka');
 });
 
 test('sttEndpoint whisper-local: URL kosong → default localhost, apiKey chat TIDAK ikut', () => {

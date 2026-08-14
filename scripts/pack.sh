@@ -22,10 +22,7 @@ case "${1:-}" in
 esac
 
 # File yang browser butuh. Tambah di sini kalau ada folder runtime baru.
-# LICENSE + THIRD_PARTY_NOTICES.md WAJIB ikut: ZIP ini mendistribusikan ulang
-# transformers.js (Apache-2.0) dan onnxruntime-web (MIT) di lib/vendor/, dan
-# kedua lisensi itu mensyaratkan teksnya ikut dalam distribusi.
-ITEMS=(manifest.json README.md LICENSE THIRD_PARTY_NOTICES.md background panel content offscreen lib icons)
+ITEMS=(manifest.json README.md LICENSE background panel content offscreen lib icons)
 
 # Gagal cepat kalau ada item yang hilang (salah ketik / folder pindah).
 for it in "${ITEMS[@]}" manifest.firefox.json; do

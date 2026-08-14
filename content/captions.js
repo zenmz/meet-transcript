@@ -90,7 +90,7 @@
     if (dirty.size && endedId) {
       post({ type: 'segments', meetingId: endedId, title: S.meetingTitle(), segs: [...dirty.values()] });
     }
-    // ponytail: dikosongkan tanpa memeriksa hasil post. Kalau post gagal (SW
+    // Dikosongkan tanpa memeriksa hasil post. Kalau post gagal (SW
     // mati tepat di tick penutup) segmen ekor itu memang hilang — sesi sudah
     // ditutup, flush timer digate sess.report, tak ada lagi yang mengirimnya.
     // Menahannya hanya menunda pembuangan sampai openSession berikutnya.
