@@ -87,6 +87,19 @@ test('import sehat: chunk & vchunk mendarat di key IndexedDB yang benar', async 
   assert.deepEqual(r, { meetings: 1, chunks: 2, audioError: null });
 });
 
+// Import MENGGANTI seluruh data, termasuk rekaman: backup tanpa rekaman harus
+// mengosongkan store, bukan membiarkan rekaman lama nempel ke meeting impor
+// (kode ruang recurring sama → "Transkrip ulang" menimpa transkrip impor
+// dengan audio sesi lain). Chunk tanpa meta tidak ditulis dan tidak dihitung.
+test('audioMeta null → store rekaman dikosongkan, chunk tak ditulis', async () => {
+  const calls = stubEnv();
+  const r = await importBackup(await zipOf(
+    { version: 1, storage: { meetings: ['a'] }, audioMeta: null },
+    [{ name: 'audio/chunk-0.webm', data: new Blob(['x']) }]));
+  assert.deepEqual(calls.imported, { meta: null, chunks: [] });
+  assert.equal(r.chunks, 0);
+});
+
 // Storage sudah tergantikan saat tahap ini gagal — melempar akan membuat panel
 // melaporkan "import gagal" untuk import yang sebenarnya sudah menimpa data.
 test('restore rekaman gagal → hasil parsial, bukan throw', async () => {

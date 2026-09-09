@@ -2,6 +2,10 @@
 // speaker, potong per chunkMs, transkrip tiap chunk saat stop.
 let audioCtx = null;
 let stream = null;
+let micStream = null;  // mic opsional (settings.mic): dicampur ke rekaman, bukan ke speaker
+let micJoining = false;
+let mixNode = null;    // GainNode: tab (+ mic) → recStream & pengawas sunyi
+let recStream = null;  // audio campuran, sumber SEMUA recorder
 let recorder = null;
 let videoRecorder = null;
 let rotateTimer = null;
@@ -26,10 +30,9 @@ function toSW(msg) { chrome.runtime.sendMessage(msg).catch(() => {}); }
 
 function startChunkRecorder() {
   const data = []; // per-recorder: rotasi tak boleh menabrak data recorder lain
-  // Substream audio-only: saat mode video, stream punya track video dan
-  // MediaRecorder ber-MIME audio menolaknya. Track-nya objek yang sama,
-  // cleanup stream utama sudah mencakup ini.
-  recorder = new MediaRecorder(new MediaStream(stream.getAudioTracks()), { mimeType: MIME });
+  // recStream = campuran tab + mic dari Web Audio, audio-only — saat mode
+  // video, track video ada di `stream`, tidak di sini (MIME audio menolaknya).
+  recorder = new MediaRecorder(recStream, { mimeType: MIME });
   recorder.ondataavailable = (e) => { if (e.data.size) data.push(e.data); };
   recorder.onstop = () => {
     const blob = new Blob(data, { type: MIME });
@@ -73,10 +76,41 @@ function watchSilence(source) {
     if (++quiet < 15) return;
     stopSilenceWatch();
     toSW({ type: 'audio-warn', meetingId: cfg?.meetingId,
-      error: 'Belum ada suara masuk 15 detik. Yang direkam hanya audio tab (peserta lain) — '
-        + 'suara mikrofonmu sendiri TIDAK ikut terekam. Kalau tak ada peserta lain yang '
-        + 'bersuara, rekaman akan kosong dan transkripnya juga.' });
+      error: 'Belum ada suara masuk 15 detik. ' + (micStream
+        ? 'Tab dan mikrofon sama-sama sunyi — cek mic dan apakah ada yang bicara.'
+        : 'Yang direkam hanya audio tab (peserta lain) — suara mikrofonmu sendiri TIDAK '
+          + 'ikut terekam (centang "Rekam mikrofon" di Settings). Kalau tak ada peserta '
+          + 'lain yang bersuara, rekaman akan kosong dan transkripnya juga.') });
   }, 1000);
+}
+
+// Mic dicampur ke mixNode. Prompt izin TIDAK bisa muncul dari dokumen ini
+// (getUserMedia gagal "Permission dismissed"), jadi gagal di sini normal:
+// SW yang memunculkan jendela izin (panel/mic.html), lalu mengirim op
+// 'mic-join' kalau user mengizinkan — mic bergabung ke rekaman yang sedang
+// jalan tanpa menyentuh recorder, karena semua recorder membaca campuran.
+async function joinMic() {
+  if (micStream || micJoining || !audioCtx) return;
+  micJoining = true;
+  let s;
+  try {
+    s = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    // name ikut: SW cuma memunculkan jendela izin untuk NotAllowedError —
+    // mic tak ada / dipakai aplikasi lain bukan soal izin.
+    toSW({ type: 'mic-denied', meetingId: cfg?.meetingId, name: e.name, error: e.message });
+    return;
+  } finally {
+    micJoining = false;
+  }
+  // Rekaman bisa keburu berhenti (atau diganti) selama prompt menunggu:
+  // context ditutup / mixNode null → sambungan gagal → lepas mic lagi.
+  try {
+    audioCtx.createMediaStreamSource(s).connect(mixNode);
+    micStream = s;
+  } catch {
+    s.getTracks().forEach((t) => t.stop());
+  }
 }
 
 // Rotasi: stop recorder chunk ini (finalisasi Blob standalone) lalu mulai lagi.
@@ -90,7 +124,10 @@ function rotateChunk() {
 // memutus recorder berarti memutus file. Timeslice 60 detik: crash di tengah
 // meeting kehilangan maksimal 1 menit video terakhir, bukan seluruh file.
 function startVideoRecorder() {
-  videoRecorder = new MediaRecorder(stream, {
+  // Video dari tab, audio dari campuran: pakai `stream` mentah berarti file
+  // video tanpa suara mic padahal rekaman audionya memuatnya.
+  videoRecorder = new MediaRecorder(
+    new MediaStream([...stream.getVideoTracks(), ...recStream.getAudioTracks()]), {
     mimeType: VIDEO_MIME,
     videoBitsPerSecond: 500_000, // preset seimbang: 720p 10fps ±250 MB/jam
     audioBitsPerSecond: 48_000,
@@ -114,6 +151,8 @@ async function start(msg) {
   }
   videoRecorder = null;
   stream?.getTracks().forEach((t) => t.stop());
+  micStream?.getTracks().forEach((t) => t.stop());
+  micStream = null; mixNode = null; recStream = null;
   await audioCtx?.close().catch(() => {});
   cfg = msg;
   chunkBlobs = [];
@@ -139,8 +178,20 @@ async function start(msg) {
   audioCtx = new AudioContext();
   const src = audioCtx.createMediaStreamSource(stream);
   src.connect(audioCtx.destination);
+  // Semua recorder merekam SATU campuran (tab + mic opsional), bukan track tab
+  // mentah: mic bisa bergabung belakangan (izin diberikan di tengah rekaman)
+  // tanpa menyentuh recorder yang sudah jalan. Mic sengaja TIDAK ke
+  // destination — itu berarti mendengar suara sendiri.
+  mixNode = audioCtx.createGain();
+  src.connect(mixNode);
+  const dest = audioCtx.createMediaStreamDestination();
+  mixNode.connect(dest);
+  recStream = dest.stream;
   if (audioCtx.state === 'suspended') await audioCtx.resume(); // tanpa ini tab bisa senyap
-  watchSilence(src);
+  watchSilence(mixNode);
+  // Tidak di-await: getUserMedia yang menunggu prompt tak boleh menahan
+  // start() (SW menunggu balasannya) — mic masuk begitu tersedia.
+  if (msg.mic) joinMic();
   startChunkRecorder();
   // Video itu lapisan opsional: konstruktor MediaRecorder bisa menolak
   // kombinasi mimeType/bitrate di mesin tertentu (NotSupportedError), dan
@@ -239,6 +290,12 @@ async function stopAndTranscribe() {
     await Promise.all(pendingSaves);
     pendingSaves = [];
     stream?.getTracks().forEach((t) => t.stop());
+    micStream?.getTracks().forEach((t) => t.stop());
+    // Dinolkan SEBELUM await close(): joinMic yang baru resolve di sela await
+    // itu menemukan mixNode null → connect gagal → track mic-nya dilepas.
+    // Kalau dinolkan sesudahnya, mic tersambung ke context yang sedang ditutup
+    // (Chrome cuma warning) lalu track-nya hidup terus tanpa pernah di-stop.
+    micStream = null; mixNode = null; recStream = null;
     await audioCtx?.close().catch(() => {});
     audioCtx = null; stream = null; recorder = null; videoRecorder = null;
 
@@ -276,8 +333,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   // hanya balasan dari sini yang membuktikan ada yang benar-benar mengerjakan.
   // Panel tak pernah membalas pesan bertarget offscreen, jadi balasan ini menang.
   if (msg.op === 'start') {
-    sendResponse({ ok: true });
-    start(msg).catch((e) => toSW({ type: 'audio-error', meetingId: msg.meetingId, error: e.message }));
+    // Balasan menunggu start() SELESAI, bukan dikirim lebih dulu: SW mencatat
+    // meeting (source audio, endedAt null, entri Riwayat) begitu ok datang —
+    // ok yang mendahului getUserMedia/beginAudio membuat start yang gagal
+    // tetap memutasi record, padahal SW menunda pencatatan justru untuk itu.
+    // Gagal dilaporkan lewat balasan; SW yang mereset rec & menutup dokumen.
+    start(msg).then(
+      () => sendResponse({ ok: true }),
+      (e) => sendResponse({ ok: false, error: e.message }));
+    return true;
   } else if (msg.op === 'stop') {
     // Dua guard, bukan satu. busy: transkrip sedang jalan. !recorder: siklus
     // rekam SUDAH selesai — cfg masih terisi dan SW menutup dokumen ini secara
@@ -308,6 +372,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     sendResponse({ ok: true });
     retranscribe(msg).catch((e) =>
       toSW({ type: 'audio-error', meetingId: msg.meetingId, error: e.message }));
+  } else if (msg.op === 'mic-join') {
+    // Izin mic baru diberikan lewat jendela izin SW di tengah rekaman. Digate
+    // cfg.mic: tombol "Izinkan mikrofon" di Settings bisa diklik saat rekaman
+    // tab-only berjalan — izin boleh tersimpan, tapi mic tak boleh ikut masuk.
+    sendResponse({ ok: true });
+    if (cfg?.mic) joinMic();
   }
   return false;
 });

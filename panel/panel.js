@@ -65,6 +65,15 @@ chrome.runtime.onMessage.addListener((msg) => {
     if (tab === 'live') render();
   } else if (msg.type === 'meeting-updated') {
     if ((tab === 'live' && msg.id === status.id) || (tab === 'history' && msg.id === viewingId)) render();
+  } else if (msg.type === 'ai-inject') {
+    // Hasil "Kirim ke Gemini/ChatGPT". Gagal → dicat di view meeting lewat
+    // momErrors (kotak yang sama dengan error MoM); sukses → tak ada kabar,
+    // tab AI-nya sendiri sudah jadi buktinya. Tanpa `id` = laporan mentah dari
+    // content script di tab AI (broadcast sampai ke sini juga) — yang dipakai
+    // adalah terusan dari SW yang membawa id meeting.
+    if (msg.ok || !msg.id) return;
+    momErrors.set(msg.id, `Kirim ke AI gagal: ${msg.error} Prompt sudah ada di clipboard — paste manual di tab AI.`);
+    if ((tab === 'live' && msg.id === status.id) || (tab === 'history' && msg.id === viewingId)) render();
   } else if (msg.type === 'rec-state') {
     // Cache audio-meta dibuang hanya saat siklus rekam/transkrip BERGANTI
     // status. Dibuang tiap pesan berarti tiap audio-progress (satu per chunk,
@@ -93,17 +102,6 @@ async function getMeeting(id) {
 }
 
 const safeName = (s) => s.replace(/[\/\\:*?"<>|]/g, '-');
-
-// Mode STT "Whisper di browser" (WASM in-extension) sudah dihapus. sttMode()
-// menurunkan ulang settings lama secara diam-diam, dan diam itu masalahnya:
-// user yang dulu full-offline (tanpa server STT, tanpa izin origin localhost)
-// baru menemukan modenya hilang lewat rekaman pertama yang gagal transkrip.
-// Peringatan ini hilang sendiri begitu user menekan Simpan di Settings —
-// doSave menulis mode hasil resolusi, jadi tak perlu state "sudah dibaca".
-const sttModeRemoved = () => settingsCache.sttMode === 'browser';
-const STT_REMOVED_NOTE = 'Mode "Whisper di browser" sudah dihapus di versi ini. '
-  + 'Setelan STT-mu dipindah otomatis ke server/API — buka Settings, cek Mode STT '
-  + 'dan STT Base URL, lalu Simpan sebelum merekam.';
 
 // Prompt MoM lengkap (template + transkrip) untuk paste ke AI web tanpa API key.
 const promptText = (meeting) => M.fillTemplate(
@@ -162,7 +160,12 @@ let lastRenderedKey = null; // view terakhir yang digambar renderMeeting (id|liv
 let audioMeta = null;       // hasil audio-meta terakhir
 let audioMetaKey = null;    // view key yang menghasilkannya (null = wajib tanya lagi)
 const momErrors = new Map(); // meetingId → pesan error MoM terakhir
-let moreOpen = false;        // <details> "Lainnya" terbuka? bertahan antar render
+let openMenu = null;         // key dropdown yang terbuka (copy|mom|unduh); bertahan antar render
+// Dropdown menutup saat klik di luar — <details> tidak punya light-dismiss.
+// Satu listener global; `open = false` memicu toggle → openMenu ikut null.
+document.addEventListener('click', (e) => {
+  document.querySelectorAll('details.menu[open]').forEach((d) => { if (!d.contains(e.target)) d.open = false; });
+});
 
 async function render() {
   const epoch = ++renderEpoch;
@@ -220,17 +223,17 @@ async function renderMeeting(id, live, epoch) {
       bar.append(el('span', 'muted', 'Untuk mulai: klik kanan di halaman Meet → "Rekam audio meeting" (atau "Rekam audio + video meeting").'));
     }
     if (recState.error) bar.append(el('div', 'err', ' ' + recState.error));
-    if (sttModeRemoved()) bar.append(el('div', 'warn', STT_REMOVED_NOTE));
     view.append(bar);
   }
 
+  // Teks biasa, bukan card berwarna — permintaan user: tanpa kotak kuning.
   if (settingsCache.transcriptSource !== 'audio' && live && status.inCall && !status.captionsOn) {
-    view.append(el('div', 'warn',
+    view.append(el('p', 'muted',
       'Caption mati. Nyalakan CC di toolbar Meet supaya transkrip terisi.'));
   }
   const quietSince = Math.max(status.lastSegmentAt || 0, status.captionsOnAt || 0);
   if (settingsCache.transcriptSource !== 'audio' && live && status.inCall && status.captionsOn && quietSince && Date.now() - quietSince > 30000) {
-    view.append(el('div', 'warn',
+    view.append(el('p', 'muted',
       'Caption nyala tapi tidak ada teks masuk 30 detik terakhir. Kalau ada yang bicara, kemungkinan DOM Meet berubah — perbaiki content/selectors.js.'));
   }
 
@@ -260,11 +263,9 @@ async function renderMeeting(id, live, epoch) {
     view.append(el('div', 'err', recState.error));
   }
 
-  // Dua baris tombol: yang dipakai tiap kali di atas, sisanya di balik
-  // <details>. Panel cuma ~350px — tujuh tombol sejajar jadi empat baris dan
-  // yang penting tenggelam di antaranya.
+  // Panel cuma ~350px — tujuh tombol sejajar jadi empat baris. Tiga dropdown
+  // (Copy / MoM / Unduh) + Transkrip ulang muat satu baris.
   const actions = el('div', 'actions');
-  const more = el('div', 'actions');
   const btn = (label, fn, box = actions) => {
     const b = el('button', null, label);
     b.addEventListener('click', fn);
@@ -280,50 +281,66 @@ async function renderMeeting(id, live, epoch) {
     clearTimeout(Number(b.dataset.timer));
     b.dataset.timer = String(setTimeout(() => { b.textContent = asli; }, ms));
   };
-  const copyBtn = btn('Copy', async () => {
+  // Dropdown <details> native (tanpa JS buka-tutup). Menu menutup begitu item
+  // diklik, jadi umpan balik aksi ditulis ke label summary (`head`) — tombol
+  // di dalam menu yang berubah label tak akan terlihat siapa pun. Yang
+  // terbuka diingat lewat openMenu: tab Live merender ulang tiap 2 detik.
+  const dropdown = (key, label) => {
+    const menu = el('details', 'menu');
+    const head = el('summary', null, label + ' ▾');
+    const list = el('div', 'menu-list');
+    menu.append(head, list);
+    menu.open = openMenu === key;
+    menu.addEventListener('toggle', () => {
+      if (menu.open) openMenu = key; else if (openMenu === key) openMenu = null;
+    });
+    actions.append(menu);
+    const item = (text, fn) => btn(text, () => { menu.open = false; fn(); }, list);
+    return { head, list, item, label: label + ' ▾' };
+  };
+
+  const copy = dropdown('copy', 'Copy');
+  const copyTo = (text) => async () => {
     try {
-      await navigator.clipboard.writeText(M.formatTranscript(meeting.segments));
-      flash(copyBtn, 'Disalin ✓');
+      await navigator.clipboard.writeText(text());
+      flash(copy.head, 'Disalin ✓');
     } catch {
-      flash(copyBtn, 'Gagal menyalin');
+      flash(copy.head, 'Gagal menyalin');
     }
-  });
-  // Prompt kosong tak berguna (Copy menyalin blank, Gemini auto-submit blank
-  // message) — tombol ini hanya muncul kalau ada transkrip untuk diisi.
-  if (meeting.segments.length) {
-    const copyPromptBtn = btn('Copy Prompt+Transkrip', async () => {
-      try {
-        await navigator.clipboard.writeText(promptText(meeting));
-        flash(copyPromptBtn, 'Disalin ✓');
-      } catch {
-        flash(copyPromptBtn, 'Gagal menyalin');
-      }
-    }, more);
-    const gemBtn = btn('Kirim ke Gemini', async () => {
-      gemBtn.disabled = true; // cegah klik ganda buka beberapa tab/percakapan Gemini
-      gemBtn.textContent = 'Membuka Gemini…';
-      const prompt = promptText(meeting);
-      // Clipboard dulu: asuransi kalau injeksi gagal (DOM Gemini berubah).
-      await navigator.clipboard.writeText(prompt).catch(() => {});
-      chrome.runtime.sendMessage({ type: 'send-to-gemini', text: prompt });
-      // Tab Live rerender ~2 detik sekali lewat broadcast status (tombol ini
-      // ikut dibuat ulang, otomatis enable) — tab Riwayat tidak rerender
-      // sendiri, jadi tanpa ini tombol tetap disabled selamanya kalau injeksi
-      // gagal dan user harus pindah tab lalu balik untuk coba lagi.
-      setTimeout(() => { gemBtn.disabled = false; gemBtn.textContent = 'Kirim ke Gemini'; }, 3000);
-    }, more);
-  }
-  btn('Unduh .txt', () => download(`${meeting.title}.txt`, M.formatTranscript(meeting.segments)), more);
-  btn('Unduh .md', () => download(`${meeting.title}.md`, M.formatMarkdown(meeting)), more);
-  const momBtn = btn(meeting.mom ? 'Regenerate MoM' : 'Generate MoM', async () => {
-    momBtn.disabled = true;
-    momBtn.textContent = 'Menghasilkan…';
+  };
+  copy.item('Copy transkrip', copyTo(() => M.formatTranscript(meeting.segments)));
+  // Prompt kosong tak berguna (Gemini auto-submit blank message, copy menyalin
+  // blank) — item prompt hanya muncul kalau ada transkrip untuk diisi.
+  if (meeting.segments.length) copy.item('Copy Prompt+Transkrip', copyTo(() => promptText(meeting)));
+
+  const mom = dropdown('mom', meeting.mom ? 'Regenerate MoM' : 'Generate MoM');
+  mom.item(meeting.mom ? 'Regenerate MoM' : 'Generate MoM', async () => {
+    mom.head.textContent = 'Menghasilkan…';
     momErrors.delete(meeting.id);
     const res = await chrome.runtime.sendMessage({ type: 'generate-mom', id: meeting.id })
       .catch(() => null);
     if (!res?.ok) momErrors.set(meeting.id, res?.error ?? 'Gagal menghubungi service worker.');
     render(); // state persisten + render(): epoch-safe, error tetap tampil setelah rerender
   });
+  // Jalur tanpa API key: prompt ditempel ke web AI (target di AI_TARGETS, SW).
+  // Hanya kalau ada transkrip — prompt kosong = auto-submit pesan blank.
+  if (meeting.segments.length) {
+    for (const [name, target] of [['Gemini', 'gemini'], ['ChatGPT', 'chatgpt']]) {
+      mom.item('Kirim ke ' + name, async () => {
+        mom.head.textContent = `Membuka ${name}…`;
+        const prompt = promptText(meeting);
+        // Clipboard dulu: asuransi kalau injeksi gagal (DOM situs berubah).
+        await navigator.clipboard.writeText(prompt).catch(() => {});
+        chrome.runtime.sendMessage({ type: 'send-to-ai', target, text: prompt, id: meeting.id });
+        // Tab Riwayat tidak rerender sendiri — label harus balik sendiri.
+        setTimeout(() => { mom.head.textContent = mom.label; }, 3000);
+      });
+    }
+  }
+
+  const dl = dropdown('unduh', 'Unduh');
+  dl.item('Unduh .txt', () => download(`${meeting.title}.txt`, M.formatTranscript(meeting.segments)));
+  dl.item('Unduh .md', () => download(`${meeting.title}.md`, M.formatMarkdown(meeting)));
   // Disembunyikan saat rekam/transkrip jalan: audio tersimpan masih milik
   // rekaman SEBELUMNYA, jadi menawarkannya di samping "Stop rekam" cuma
   // membingungkan — SW menolak kliknya juga.
@@ -348,28 +365,26 @@ async function renderMeeting(id, live, epoch) {
       // Chunk disimpan sambil merekam, jadi tombol ini juga jalur penyelamat
       // kalau rekaman mati di tengah (browser ditutup) atau STT gagal total:
       // audionya tetap utuh sampai potongan terakhir yang sempat ditulis.
-      const dlBtn = btn(`Unduh audio${audioMeta.count > 1 ? ` (${audioMeta.count} file)` : ''}`, async () => {
-        dlBtn.disabled = true;
+      dl.item(`Unduh audio${audioMeta.count > 1 ? ` (${audioMeta.count} file)` : ''}`, async () => {
         const n = await downloadAudio(meeting).catch(() => 0);
-        dlBtn.textContent = n ? `Diunduh ✓${n > 1 ? ` (${n} file)` : ''}` : 'Audio tidak ditemukan';
-        dlBtn.disabled = false;
-      }, more);
+        flash(dl.head, n ? `Diunduh ✓${n > 1 ? ` (${n} file)` : ''}` : 'Audio tidak ditemukan', 3000);
+      });
       // Chrome memblok unduhan beruntun sampai user mengizinkan sekali — tanpa
-      // keterangan ini, file ke-2 dst tampak hilang begitu saja. Ikut ke dalam
-      // <details>, bukan ke baris utama: keterangannya tak ada gunanya kalau
-      // tombol yang dijelaskan sedang tersembunyi.
-      if (audioMeta.count > 1) more.append(el('span', 'muted',
+      // keterangan ini, file ke-2 dst tampak hilang begitu saja. Di dalam
+      // menu, di bawah tombol yang dijelaskannya.
+      if (audioMeta.count > 1) dl.list.append(el('span', 'muted',
         'Beberapa file: izinkan "Download multiple files" kalau Chrome bertanya.'));
     }
     if (audioMeta.videoCount > 0) {
-      const vBtn = btn('Unduh video', async () => {
-        vBtn.disabled = true;
+      dl.item('Unduh video', async () => {
         const ok = await downloadVideo(meeting).catch(() => false);
-        vBtn.textContent = ok ? 'Diunduh ✓' : 'Video tidak ditemukan';
-        vBtn.disabled = false;
-      }, more);
+        flash(dl.head, ok ? 'Diunduh ✓' : 'Video tidak ditemukan', 3000);
+      });
     }
-    if (audioMeta.count > 0) {
+    // Hanya saat Sumber transkrip = Rekam audio (pilihan user 2026-09-09): di
+    // mode caption transkrip datang dari caption, tombol ini cuma membingungkan.
+    // STT saat Stop sengaja TIDAK ikut digate — cuma tombolnya yang disembunyikan.
+    if (audioMeta.count > 0 && settingsCache.transcriptSource === 'audio') {
       const reBtn = btn('Transkrip ulang', async () => {
         reBtn.disabled = true;
         reBtn.textContent = 'Mentranskrip…';
@@ -385,17 +400,6 @@ async function renderMeeting(id, live, epoch) {
     }
   }
   view.append(actions);
-  // <details> native: disclosure yang benar tanpa satu baris JS pun untuk
-  // buka-tutupnya. Yang perlu ditulis sendiri cuma mengingat posisinya —
-  // tab Live merender ulang tiap 2 detik, dan tanpa ini menu yang baru dibuka
-  // menutup sendiri di depan mata user.
-  if (more.children.length) {
-    const box = el('details', 'more');
-    box.open = moreOpen;
-    box.addEventListener('toggle', () => { moreOpen = box.open; });
-    box.append(el('summary', null, 'Lainnya'), more);
-    view.append(box);
-  }
 
   const list = el('div');
   for (const s of meeting.segments) {
@@ -473,6 +477,22 @@ async function renderSettings(epoch) {
   }
   source.value = settings.transcriptSource ?? 'caption';
 
+  // Mic opsional (Chrome-only), dicampur ke rekaman tab. Izinnya hanya bisa
+  // diminta dari window extension sungguhan yang dibuka SW — tombol di sini
+  // untuk setup di awal; kalau belum, SW memintanya sendiri saat rekam mulai.
+  const micWrap = el('div');
+  const micBox = Object.assign(document.createElement('input'), { type: 'checkbox', checked: !!settings.mic });
+  const micLabel = el('label');
+  micLabel.append(micBox, 'Rekam mikrofon');
+  const micBtn = el('button', null, 'Izinkan mikrofon');
+  micBtn.addEventListener('click', () => chrome.runtime.sendMessage({ type: 'open-mic-permission' }).catch(() => {}));
+  const micRow = el('div', 'actions');
+  micRow.append(micBtn);
+  micWrap.append(micLabel, micRow, el('div', 'muted',
+    'Tanpa headset, suara peserta dari speaker bisa ikut terekam lewat mic (dobel).'));
+  micWrap.hidden = !HAS_AUDIO;
+  view.append(micWrap);
+
   // Seluruh blok STT hanya berarti kalau transkrip datang dari audio. Sumber
   // caption tidak menyentuh STT sama sekali — menampilkan mode, info, dan
   // empat field-nya cuma menyuruh user mengonfigurasi sesuatu yang tak dipakai.
@@ -499,14 +519,6 @@ async function renderSettings(epoch) {
   };
   const sttInfo = el('div', 'info');
   view.append(sttInfo);
-  // Dicat di sini juga, bukan cuma di tab Live: Settings adalah tempat
-  // memperbaikinya, dan dropdown di atas sudah terlanjur menampilkan mode
-  // hasil resolusi seolah-olah itu memang pilihan user selama ini. Dibaca
-  // dari `settings` (storage segar), bukan settingsCache — view ini tidak
-  // ikut dirender ulang oleh onChanged.
-  const sttRemovedNote = settings.sttMode === 'browser' ? el('div', 'warn', STT_REMOVED_NOTE) : null;
-  if (sttRemovedNote) view.append(sttRemovedNote);
-
   // Kosong TIDAK ditampilkan apa adanya untuk whisper-local: sttEndpoint
   // memakai WHISPER_DEFAULT kalau URL-nya kosong, jadi field kosong berarti UI
   // menyembunyikan URL yang sebenarnya dipakai — terlihat seperti setelan yang
@@ -686,6 +698,7 @@ async function renderSettings(epoch) {
         model: model.value.trim() || 'gpt-4o-mini',
         momTemplate: template.value,
         transcriptSource: source.value,
+        mic: micBox.checked,
         sttMode: sttModeSel.value,
         sttModel: sttModel.value.trim() || ST.DEFAULT_API_MODEL,
         sttLanguage: sttLanguage.value.trim(),
@@ -693,11 +706,6 @@ async function renderSettings(epoch) {
         sttApiKey: sttApiKey.value.trim(),
       },
     });
-    // Simpan menulis mode hasil resolusi, jadi peringatan "mode browser
-    // dihapus" tidak berlaku lagi. View ini tidak dirender ulang setelah
-    // Simpan — tanpa baris ini peringatannya menetap padahal user sudah
-    // melakukan persis yang disuruh.
-    if (sttRemovedNote) sttRemovedNote.hidden = true;
     if (warning) setNote('err', `Tersimpan, tapi ${warning} Request bisa gagal.`);
     else setNote('ok', 'Tersimpan.');
   }
@@ -716,8 +724,10 @@ async function renderSettings(epoch) {
     // Digate sama seperti import: rekaman yang sedang jalan baru menulis
     // potongan tiap rotasi, jadi zip yang dibuat sekarang memuat rekaman
     // separuh jadi — dan cacatnya baru ketahuan saat file itu di-restore.
-    if (recState.recording || recState.transcribing) {
-      return setBnote('err', '✗ Rekaman/transkrip sedang berjalan — backup akan memuat rekaman separuh. Stop dulu.');
+    // Meeting caption live ikut digate: segmen masuk tiap 500 ms, zip-nya
+    // memuat transkrip yang terpotong di tengah.
+    if (recState.recording || recState.transcribing || status.inCall) {
+      return setBnote('err', '✗ Rekaman/transkrip/meeting sedang berjalan — backup akan memuat data separuh. Tunggu selesai dulu.');
     }
     exportBtn.disabled = true;
     setBnote('muted', 'Menyusun zip…'); // rekaman video besar — bisa beberapa detik
@@ -740,8 +750,12 @@ async function renderSettings(epoch) {
     if (!file) return;
     // Import men-clear storage — rekaman/transkrip yang sedang berjalan akan
     // menulis ke record yang barusan dihapus/diganti. Tolak, jangan menunggu.
-    if (recState.recording || recState.transcribing) {
-      return setBnote('err', '✗ Rekaman/transkrip sedang berjalan — stop dulu sebelum import.');
+    // Meeting caption live juga: saveSegments di SW (get → set) tidak
+    // diserialisasi dengan clear()+set() import, dan set-nya yang mendarat
+    // terakhir menimpa index `meetings` jadi [id aktif] — semua meeting impor
+    // lenyap dari Riwayat sementara alert bilang "Import selesai".
+    if (recState.recording || recState.transcribing || status.inCall) {
+      return setBnote('err', '✗ Rekaman/transkrip/meeting sedang berjalan — stop atau keluar dulu sebelum import.');
     }
     if (!confirm('Import MENGGANTI seluruh data sekarang (riwayat, settings, rekaman tersimpan). Lanjut?')) return;
     importBtn.disabled = true;

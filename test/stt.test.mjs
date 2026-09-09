@@ -61,7 +61,11 @@ test('sttMode migrasi: sttMode browser tersimpan → diturunkan ulang', () => {
   assert.equal(sttMode({ sttMode: 'browser' }), 'whisper-local');
   assert.equal(sttMode({ sttMode: 'browser', sttBaseUrl: 'http://localhost:8080/v1' }), 'whisper-local');
   assert.equal(sttMode({ sttMode: 'browser', sttBaseUrl: 'https://api.openai.com/v1' }), 'api');
-  assert.equal(sttMode({ sttMode: 'browser', apiKey: 'k' }), 'api');
+  // Mode browser = audio tak pernah keluar mesin. Tanpa STT URL yang dipilih
+  // user, TIDAK boleh jatuh ke endpoint+key chat (audio meeting terkirim ke
+  // api.openai.com diam-diam); jatuh ke whisper lokal yang gagal terang-terangan.
+  assert.equal(sttMode({ sttMode: 'browser', apiKey: 'k' }), 'whisper-local');
+  assert.equal(sttMode({ sttMode: 'browser', baseUrl: 'https://api.openai.com/v1' }), 'whisper-local');
 });
 
 test('sttEndpoint: settings browser lama → mode http, bukan browser', () => {

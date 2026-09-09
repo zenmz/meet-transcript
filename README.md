@@ -16,9 +16,10 @@ Seluruh data rapat disimpan secara lokal di peramban (*browser*) Anda. Tanpa ser
 
 * **Multi-Sumber Transkripsi:** Menggabungkan *caption* bawaan Google Meet (menyertakan nama pembicara) dan rekaman audio *tab* (via STT) dalam satu linimasa rapat, diurutkan menurut waktu.
 * **Rekam Video (Opsional):** Rekam isi *tab* Meet sebagai satu fail `.webm` (720p, VP9, ±250 MB/jam) lewat menu klik kanan **Rekam audio + video meeting** — transkrip audio tetap berjalan seperti biasa.
+* **Rekam Mikrofon (Opsional):** Bawaan hanya suara peserta lain (audio *tab*) yang terekam. Centang **Rekam mikrofon** di Settings agar suara Anda ikut dicampur ke rekaman audio dan video; izin mikrofon diminta sekali lewat jendela kecil.
 * **Endpoint STT Milik Anda:** Arahkan ke *server* Whisper pribadi (whisper.cpp, faster-whisper) di jaringan sendiri, atau ke *endpoint* STT API mana pun yang OpenAI-compatible.
 * **Pembuatan MoM Otomatis:** Menghasilkan *context*, *discussion*, peserta, dan *action items* menggunakan *endpoint* LLM yang kompatibel dengan OpenAI (misal: `gpt-4o-mini`). *Template* dapat dikustomisasi.
-* **Fleksibilitas Tanpa API Key:** Anda dapat menyalin *prompt* beserta transkrip ke *clipboard*, atau mengirimkannya secara otomatis ke Google Gemini di *tab* baru tanpa memerlukan integrasi API.
+* **Fleksibilitas Tanpa API Key:** Anda dapat menyalin *prompt* beserta transkrip ke *clipboard*, atau mengirimkannya secara otomatis ke Google Gemini atau ChatGPT di *tab* baru tanpa memerlukan integrasi API.
 * **Manajemen Riwayat Lokal:** Transkrip, MoM, dan setelan tersimpan di `chrome.storage.local`; potongan audio di IndexedDB. Ekspor riwayat ke `.txt` atau `.md` kapan saja.
 * **Backup & Restore:** Tombol **Export backup (.zip)** di Settings menyimpan seluruh data (riwayat, MoM, setelan, rekaman terakhir) ke satu fail ZIP; **Import backup** memulihkannya — termasuk setelah *uninstall*/pindah komputer.
 * **Sadar Rapat Berulang:** Rapat *recurring* memakai link (kode ruang) yang sama — setiap sesi tetap menjadi entri Riwayat terpisah. Jeda lebih dari 30 menit setelah rapat berakhir dianggap sesi baru; keluar-masuk sebentar tetap tersambung ke sesi yang sama.
@@ -58,7 +59,7 @@ Buka `chrome://extensions` → **Load unpacked** → pilih folder hasil *clone*.
 Pasang langsung dari Add-ons resmi Mozilla: **[Meet Transcript di Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/meet-transcript/)** → klik **Add to Firefox**. Update berjalan otomatis. Setelah terpasang, klik ikon Meet Transcript di *toolbar* untuk membuka/menutup *sidebar*.
 
 > [!NOTE]
-> Versi Firefox **caption-only**: fitur Perekaman Audio & Mode STT di bawah tidak tersedia (Firefox tidak punya API `tabCapture`). Transkrip dari *caption*, Riwayat, MoM, dan Kirim ke Gemini berfungsi penuh.
+> Versi Firefox **caption-only**: fitur Perekaman Audio & Mode STT di bawah tidak tersedia (Firefox tidak punya API `tabCapture`). Transkrip dari *caption*, Riwayat, MoM, dan Kirim ke Gemini/ChatGPT berfungsi penuh.
 >
 > Untuk pengembangan: salin folder repo, di salinan itu timpa `manifest.json` dengan isi `manifest.firefox.json`, lalu muat via `about:debugging` → *This Firefox* → *Load Temporary Add-on* (hilang saat Firefox ditutup).
 
@@ -69,7 +70,7 @@ Pasang langsung dari Add-ons resmi Mozilla: **[Meet Transcript di Firefox Add-on
 1. **Mulai Rapat:** Bergabunglah ke Google Meet. Ekstensi akan mencoba mengaktifkan *Closed Captions* (CC) secara otomatis. Jika gagal, aktifkan manual melalui *toolbar* Meet.
 2. **Buka Panel:** Klik ikon ekstensi untuk membuka *side panel* (Firefox: *sidebar*). *Tab* **Live** akan mulai terisi secara otomatis.
 3. **Rekam Audio/Video (Opsional):** Klik kanan pada area mana saja di halaman Meet, lalu pilih **Rekam audio meeting** (atau **Rekam audio + video meeting** untuk ikut merekam tampilan *tab*).
-4. **Hasilkan MoM:** Setelah rapat selesai, buka *tab* **Riwayat** → pilih rapat → klik **Generate MoM**. Tombol **Unduh .txt** dan **Unduh .md** berada di dalam menu **Lainnya**.
+4. **Hasilkan MoM:** Setelah rapat selesai, buka *tab* **Riwayat** → pilih rapat → buka dropdown **Generate MoM** → **Generate MoM** (atau **Kirim ke Gemini** / **Kirim ke ChatGPT** tanpa API key). Dropdown **Copy** berisi *Copy transkrip* / *Copy Prompt+Transkrip*; dropdown **Unduh** berisi *.txt*, *.md*, dan audio/video rekaman bila ada.
 
 **Konfigurasi Awal (Settings):**
 Sebelum penggunaan pertama, isi menu *Settings*: masukkan API Key LLM, pilih Model, dan sesuaikan *Template* MoM (gunakan variabel `{{transcript}}`). Blok **Mode STT** baru muncul setelah **Sumber transkrip** diubah ke *Rekam audio* (Chrome/Chromium saja — di Firefox blok ini tidak ada). Gunakan tombol **Tes koneksi** untuk memvalidasi konfigurasi Anda.
@@ -89,7 +90,7 @@ Anda dapat merekam audio *tab* untuk ditranskripsi via STT, baik secara mandiri 
 **Catatan Penting:**
 
 * Karena batasan kebijakan keamanan Chrome, inisiasi perekaman (`tabCapture`) hanya dapat dipicu melalui klik *context menu* (klik kanan), bukan dari tombol di *side panel*.
-* Hanya suara dari peserta lain (*tab audio*) yang direkam. Suara dari mikrofon Anda sendiri tidak akan masuk ke dalam rekaman audio ini.
+* Bawaan: hanya suara peserta lain (*tab audio*) yang direkam. Centang **Rekam mikrofon** di *Settings* agar suara Anda ikut, lalu klik **Izinkan mikrofon** sekali untuk memberi izin (kalau belum, jendela izin muncul otomatis saat rekaman dimulai; rekaman *tab* tetap jalan dan mic bergabung begitu disetujui). Tanpa headset, suara peserta dari speaker bisa ikut terekam lewat mic (dobel).
 * Setiap 10 menit, potongan audio disimpan ke IndexedDB untuk mencegah kehilangan data jika peramban tertutup mendadak. Potongan tersebut dapat diunduh kapan saja melalui tombol **Unduh audio** sebagai fail `.webm` terpisah (membutuhkan izin *"Download multiple files"* pada Chrome bila lebih dari satu potongan).
 * Hanya audio dari rekaman **terakhir** yang disimpan. Jika Anda memulai perekaman baru, data audio sebelumnya akan dihapus.
 
@@ -112,7 +113,7 @@ Ekstensi ini dirancang dengan pendekatan *privacy-first*:
 * **Penyimpanan Lokal:** API Key Anda disimpan secara eksklusif di `chrome.storage.local` perangkat Anda dan tidak pernah dikomit ke repositori. Tidak ada telemetri maupun analitik di dalam ekstensi ini.
 * **Whisper Lokal:** audio dikirim ke URL yang **Anda sendiri** isi di *STT Base URL* (default `http://localhost:8080/v1`). Ekstensi **tidak** memaksa URL itu benar-benar lokal — pastikan isinya memang server Anda. Bila *STT API key* pernah diisi, nilainya tetap ikut sebagai header `Authorization` walaupun field-nya tersembunyi di mode ini.
 * **Transparansi Endpoint:** MoM dihasilkan melalui *endpoint* pilihan Anda. Pastikan *endpoint* yang Anda konfigurasikan sesuai dengan kebijakan keamanan data perusahaan atau tim Anda.
-* **Copy Prompt / Kirim ke Gemini:** kedua tombol ini menyalin **seluruh transkrip** ke clipboard, dan tombol Gemini menempelkannya ke `gemini.google.com` — artinya seluruh isi rapat masuk ke akun Google Anda. Jangan gunakan untuk rapat yang isinya tidak boleh keluar.
+* **Copy Prompt / Kirim ke Gemini / Kirim ke ChatGPT:** ketiganya menyalin **seluruh transkrip** ke clipboard, dan tombol Gemini/ChatGPT menempelkannya ke `gemini.google.com` / `chatgpt.com` — artinya seluruh isi rapat masuk ke akun Google/OpenAI Anda. Jangan gunakan untuk rapat yang isinya tidak boleh keluar.
 * **Fail Backup:** ZIP hasil **Export backup** memuat **API key Anda dalam teks polos** beserta seluruh transkrip. Simpan failnya di tempat yang aman dan jangan dibagikan.
 
 ---
@@ -122,7 +123,7 @@ Ekstensi ini dirancang dengan pendekatan *privacy-first*:
 * **Transkrip tidak muncul meskipun *caption* menyala:** Google mungkin telah memperbarui struktur DOM Meet. Ekstensi akan menampilkan peringatan jika *caption* aktif namun teks tidak terbaca selama 30 detik. (Bagi *developer*, perbarui penyeleksi pada `content/selectors.js`).
 * **Tab Live menunjuk rapat lama, atau perekaman tidak berhenti sendiri:** Google Meet adalah aplikasi SPA — pindah ruang dan keluar panggilan hanya mengganti URL pada dokumen yang sama. Pelacakan sesi ditangani `content/session.js` (murni, diuji pada `test/session.test.mjs`).
 * **Transkrip audio kosong:** Periksa URL *endpoint* atau model STT di pengaturan Anda. Setelah diperbaiki, klik **Transkrip ulang** pada riwayat rapat terkait (audio asli masih tersimpan).
-* **Peringatan "Belum ada suara masuk":** Sistem hanya menangkap suara dari peserta lain. Jika tidak ada orang lain yang berbicara, maka tidak ada audio yang diproses.
+* **Peringatan "Belum ada suara masuk":** Tanpa opsi **Rekam mikrofon**, sistem hanya menangkap suara peserta lain. Jika tidak ada orang lain yang berbicara, maka tidak ada audio yang diproses.
 * **Log Eror:** Jika terjadi kesalahan pada *side panel*, pesan *error* dan *stack trace* dapat disorot dan disalin langsung dari antarmuka panel.
 
 ---

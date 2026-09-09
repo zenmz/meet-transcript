@@ -32,6 +32,14 @@ function updateBadge() {
 // Mode audio: state rekaman + lifecycle offscreen document.
 let rec = { recording: false, transcribing: false, meetingId: null };
 
+// Versi ≤0.3 menyimpan bobot model "Whisper di browser" (±250–370 MB) di
+// Cache API origin extension; modenya dihapus di 0.4.0 tapi cache-nya tidak
+// ikut, dan tidak ada UI untuk membersihkannya. Firefox: caches ada, nama ini
+// tak pernah dibuat → delete() resolve false, tanpa efek.
+chrome.runtime.onInstalled.addListener(() => {
+  globalThis.caches?.delete('transformers-cache')?.catch(() => {});
+});
+
 // Judul tab Meet: Chrome menaruh "Meet" di DEPAN (`Meet – abc-defg-hij`), tapi
 // bentuk trailing " - Google Meet" juga muncul di sebagian versi/locale.
 // Sisa yang kosong atau cuma meeting id bukan judul yang berguna.
@@ -143,8 +151,28 @@ async function sttConfig() {
   return {
     sttMode: stt.mode, baseUrl: stt.baseUrl, apiKey: stt.apiKey,
     sttModel: stt.model, sttLanguage: stt.language,
+    mic: !!settings.mic, // ikut di sini: satu tempat baca settings untuk offscreen
   };
 }
+
+// Izin mikrofon. Prompt-nya TIDAK bisa muncul dari offscreen maupun side panel
+// (getUserMedia gagal "Permission dismissed"); hanya dari halaman extension di
+// window/tab sungguhan. Izin tersimpan per origin extension, jadi sekali
+// diberikan lewat panel/mic.html, offscreen dapat mic tanpa prompt. Window
+// popup kecil, bukan tab: tab Meet tak boleh kehilangan fokus di tengah rapat.
+// Jendelanya menutup dirinya sendiri (panel/mic.js) — bukan dari sini: SW bisa
+// idle-restart selama user membaca prompt, dan id yang cuma hidup di memori
+// SW ikut hilang. micWin di sini hanya penjaga "jangan buka dua".
+let micWin = null;
+async function askMicPermission() {
+  if (micWin != null) return;
+  micWin = -1; // klaim SINKRON sebelum await: klik ganda tak boleh membuka dua jendela
+  const w = await chrome.windows.create({
+    url: chrome.runtime.getURL('panel/mic.html'), type: 'popup', width: 460, height: 240, focused: true,
+  }).catch(() => null);
+  micWin = w?.id ?? null;
+}
+chrome.windows?.onRemoved.addListener((id) => { if (id === micWin) micWin = null; });
 
 // Start yang sedang berjalan. stopRecording menunggunya: tanpa itu, klik Stop
 // (atau tab Meet yang ditutup) di detik-detik startup membuat SW mereset rec
@@ -201,7 +229,7 @@ async function startRecordingInner({ streamId, meetingId, title, baseTime, video
     target: 'offscreen', op: 'start', streamId, meetingId, ...stt,
     chunkMs: 600000, baseTime, video: !!video,
   }).catch((e) => ({ ok: false, error: e.message }));
-  if (!res?.ok) throw new Error('Offscreen tidak merespons — rekaman tidak dimulai.');
+  if (!res?.ok) throw new Error(res?.error || 'Offscreen tidak merespons — rekaman tidak dimulai.');
   // Dicatat SETELAH start dikonfirmasi: start yang gagal tidak boleh membalik
   // meeting caption yang sudah ada jadi source:'audio' dan menghapus endedAt-nya,
   // atau meninggalkan entri Riwayat kosong untuk rekaman yang tak pernah terjadi.
@@ -501,57 +529,120 @@ chrome.runtime.onConnect.addListener((port) => {
   port.onDisconnect.addListener(finish);
 });
 
-// Berjalan DI HALAMAN Gemini via executeScript — harus mandiri (di-serialize,
-// tak bisa akses scope SW). Poll: Gemini SPA, editor muncul belakangan.
-// Selector dipusatkan di SEL — titik perbaikan kalau DOM Gemini berubah.
-function injectGeminiPrompt(text) {
-  const SEL = {
+// Situs AI tujuan "Kirim ke …". SEMUA selector DOM ada di tabel ini — titik
+// perbaikan kalau DOM situsnya berubah. Kedua editor (Quill di Gemini,
+// ProseMirror di ChatGPT) sama-sama satu <p> per baris dan mendeteksi mutasi
+// DOM + event input, jadi satu injektor cukup. `origin` = URL yang ditunggu:
+// belum sign-in → redirect ke halaman login juga 'complete'.
+const AI_TARGETS = {
+  gemini: {
+    url: 'https://gemini.google.com/app', origin: 'https://gemini.google.com/',
     editor: 'div.ql-editor',
     send: 'button[aria-label*="Send" i], button[aria-label*="Kirim" i], button.send-button',
-  };
-  const deadline = Date.now() + 20000;
+  },
+  // ChatGPT punya DUA composer: login = ProseMirror `#prompt-textarea` (tombol
+  // kirim `data-testid="send-button"`, baru ada di DOM setelah editor terisi);
+  // logged-out ("unauth-mweb") = <textarea name="prompt"> di <form method=post>
+  // dengan tombol `data-composer-submit`. Keduanya didukung — injectPrompt
+  // membedakan textarea vs contenteditable dari tag-nya.
+  chatgpt: {
+    url: 'https://chatgpt.com/', origin: 'https://chatgpt.com/',
+    editor: '#prompt-textarea, textarea[name="prompt"], div.ProseMirror[contenteditable="true"]',
+    send: 'button[data-testid="send-button"], button[data-composer-submit], '
+      + 'button[aria-label*="Send" i], button[aria-label*="Kirim" i]',
+  },
+};
+
+// Berjalan DI HALAMAN target via executeScript — harus mandiri (di-serialize,
+// tak bisa akses scope SW; selector dikirim lewat `sel`). Poll: SPA, editor
+// muncul belakangan. Hasilnya DILAPORKAN (pesan 'ai-inject'): script ini
+// content script, jadi chrome.runtime.sendMessage tersedia — tanpa laporan,
+// injeksi yang gagal cuma tampak sebagai tab AI yang diam.
+function injectPrompt(text, sel) {
+  // Dua 'complete' di dokumen yang sama → cukup sekali; reload = window baru.
+  if (window.__meetTranscriptPrompt) return;
+  window.__meetTranscriptPrompt = true;
+  const report = (ok, error) => chrome.runtime.sendMessage({ type: 'ai-inject', ok, error }).catch(() => {});
+  const deadline = Date.now() + 60000;
   const timer = setInterval(() => {
-    const editor = document.querySelector(SEL.editor);
+    const editor = document.querySelector(sel.editor);
     if (!editor) {
-      if (Date.now() > deadline) clearInterval(timer); // timeout → user paste manual (clipboard)
+      if (Date.now() > deadline) { clearInterval(timer); report(false, 'Editor tidak muncul dalam 60 detik.'); }
       return;
     }
     clearInterval(timer);
     editor.focus();
-    editor.replaceChildren();
-    // Quill: satu <p> per baris; InputEvent supaya framework Gemini deteksi isi.
-    for (const line of text.split('\n')) {
-      const p = document.createElement('p');
-      p.textContent = line;
-      editor.append(p);
+    if (editor.tagName === 'TEXTAREA' || editor.tagName === 'INPUT') {
+      // Setter native, bukan `editor.value = …`: framework yang membungkus
+      // properti value (React dkk) tidak melihat assignment langsung.
+      const proto = editor.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, 'value').set.call(editor, text);
+    } else {
+      editor.replaceChildren();
+      // Satu <p> per baris (Quill/ProseMirror); framework memungut mutasinya.
+      for (const line of text.split('\n')) {
+        const p = document.createElement('p');
+        p.textContent = line;
+        editor.append(p);
+      }
     }
+    // InputEvent supaya framework halaman mendeteksi isi (enable tombol kirim).
     editor.dispatchEvent(new InputEvent('input', { bubbles: true }));
-    // Tombol kirim baru enable setelah framework proses input event.
-    setTimeout(() => document.querySelector(SEL.send)?.click(), 500);
+    // Tombol kirim baru ada/enable setelah framework memproses input event —
+    // di ChatGPT tombolnya bahkan tak ada di DOM selagi editor kosong. Poll
+    // sampai 5 detik, mulai 500 ms (Gemini: tombol ada tapi belum aktif).
+    setTimeout(() => {
+      const sendDeadline = Date.now() + 5000;
+      const sendTimer = setInterval(() => {
+        const send = document.querySelector(sel.send);
+        if (send && !send.disabled) { clearInterval(sendTimer); send.click(); report(true); }
+        else if (Date.now() > sendDeadline) {
+          clearInterval(sendTimer);
+          report(false, 'Prompt tertempel tapi tombol kirim tidak ditemukan — tekan Enter manual.');
+        }
+      }, 250);
+    }, 500);
   }, 500);
 }
 
-function sendToGemini(text) {
-  chrome.tabs.create({ url: 'https://gemini.google.com/app' }).then((tab) => {
-    // Satu fungsi pelepas untuk kedua listener: injeksi yang BERHASIL juga harus
-    // melepas onRemoved, kalau tidak tiap kiriman meninggalkan satu closure hidup
-    // sampai tab Gemini-nya ditutup.
+// Pengiriman ke AI yang sedang berjalan (satu saja): dipakai handler 'ai-inject'
+// untuk menutup listener dan meneruskan hasilnya ke panel.
+let aiPending = null;
+
+function sendToAi(text, target, meetingId) {
+  const ai = AI_TARGETS[target];
+  if (!ai) return;
+  aiPending?.done();
+  chrome.tabs.create({ url: ai.url }).then((tab) => {
+    const finish = (ok, error) => {
+      done();
+      notifyPanel({ type: 'ai-inject', id: meetingId, ok, error });
+    };
+    // Satu fungsi pelepas untuk semua listener/timer — closure tak boleh hidup
+    // sampai tab AI-nya ditutup.
     const done = () => {
+      clearTimeout(giveUp);
       chrome.tabs.onUpdated.removeListener(onUpdated);
       chrome.tabs.onRemoved.removeListener(gone);
+      if (aiPending?.tabId === tab.id) aiPending = null;
     };
+    const giveUp = setTimeout(() => finish(false, 'Halaman AI tidak selesai dimuat dalam 90 detik.'), 90000);
     const onUpdated = (id, info, t) => {
       if (id !== tab.id || info.status !== 'complete') return;
-      // Belum sign-in → redirect ke accounts.google.com juga 'complete': tunggu Gemini asli.
-      if (!t.url?.startsWith('https://gemini.google.com/')) return;
-      done();
-      // Gagal inject (SW restart, DOM berubah) → diam: teks sudah di clipboard.
-      chrome.scripting.executeScript({ target: { tabId: tab.id }, func: injectGeminiPrompt, args: [text] })
-        .catch(() => {});
+      if (!t.url?.startsWith(ai.origin)) return; // masih di halaman login → tunggu
+      // Listener TIDAK dilepas di sini: halaman AI bisa memuat ulang dirinya
+      // (challenge, redirect sesi) setelah 'complete' pertama, dan itu membunuh
+      // script yang sudah disuntik. Tiap 'complete' di origin tujuan disuntik
+      // lagi; flag di window (injectPrompt) mencegah dobel di dokumen yang sama.
+      // Dilepas saat script melapor ('ai-inject'), tab ditutup, atau giveUp.
+      chrome.scripting.executeScript({
+        target: { tabId: tab.id }, func: injectPrompt, args: [text, { editor: ai.editor, send: ai.send }],
+      }).catch((e) => finish(false, e.message));
     };
     function gone(id) { if (id === tab.id) done(); }
     chrome.tabs.onUpdated.addListener(onUpdated);
     chrome.tabs.onRemoved.addListener(gone);
+    aiPending = { tabId: tab.id, done, finish };
   });
 }
 
@@ -624,8 +715,48 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     broadcastRec({ error: msg.error });
     return false;
   }
-  if (msg.type === 'send-to-gemini') {
-    sendToGemini(msg.text);
+  if (msg.type === 'send-to-ai') {
+    sendToAi(msg.text, msg.target, msg.id);
+    return false;
+  }
+  if (msg.type === 'ai-inject') {
+    // Laporan dari injectPrompt di tab AI. Hanya dari tab yang memang sedang
+    // ditunggu — tab AI lain (dibuka user sendiri) tidak punya script ini,
+    // tapi cek pengirim tetap murah.
+    if (aiPending && sender.tab?.id === aiPending.tabId) aiPending.finish(msg.ok, msg.error);
+    return false;
+  }
+  if (msg.type === 'open-mic-permission') { // tombol "Izinkan mikrofon" di Settings
+    askMicPermission();
+    return false;
+  }
+  if (msg.type === 'mic-denied') {
+    // Offscreen gagal getUserMedia mic. Rekaman tab sudah jalan. Hanya soal
+    // IZIN (NotAllowedError) yang dijawab dengan jendela izin — mic yang tak
+    // ada / dipakai aplikasi lain akan gagal lagi di jendela itu, dan jendela
+    // yang muncul tiap mulai rekam cuma mencuri fokus dari Meet.
+    if (msg.name === 'NotAllowedError') {
+      askMicPermission();
+      broadcastRec({ error: 'Mikrofon belum diizinkan — izinkan di jendela yang muncul; rekaman tab tetap jalan.' });
+    } else {
+      broadcastRec({ error: `Mikrofon tidak bisa dipakai (${msg.error}) — rekaman tab tetap jalan tanpa mic.` });
+    }
+    return false;
+  }
+  if (msg.type === 'mic-permission') {
+    // Hasil dari panel/mic.html (jendelanya menutup sendiri). Gate hasOffscreen,
+    // bukan rec.recording: rec hilang kalau SW idle-restart selama prompt
+    // menunggu, padahal offscreen masih merekam. Offscreen sendiri mengabaikan
+    // mic-join saat tidak merekam / cfg.mic false.
+    hasOffscreen().then((on) => {
+      if (!on) return;
+      if (msg.granted) {
+        chrome.runtime.sendMessage({ target: 'offscreen', op: 'mic-join' }).catch(() => {});
+        broadcastRec({ error: null }); // keluhan "mic belum diizinkan" tak berlaku lagi
+      } else {
+        broadcastRec({ error: 'Izin mikrofon ditolak — rekaman jalan tanpa suara mikrofon.' });
+      }
+    });
     return false;
   }
   return false;
