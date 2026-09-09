@@ -25,6 +25,7 @@ Seluruh data rapat disimpan secara lokal di peramban (*browser*) Anda. Tanpa ser
 * **Sadar Rapat Berulang:** Rapat *recurring* memakai link (kode ruang) yang sama — setiap sesi tetap menjadi entri Riwayat terpisah. Jeda lebih dari 30 menit setelah rapat berakhir dianggap sesi baru; keluar-masuk sebentar tetap tersambung ke sesi yang sama.
 * **Penyelamatan Audio Cerdas:** Potongan audio disimpan ke IndexedDB selama proses perekaman. Jika terjadi kesalahan konfigurasi STT, Anda cukup melakukan "Transkrip ulang" tanpa kehilangan data audio.
 * **Siklus Hidup Otomatis:** Perekaman berhenti otomatis saat rapat selesai (keluar panggilan, pindah ruang, atau *tab* ditutup).
+* **Sembunyikan Caption:** Tombol berikon Meet Transcript di pojok kanan bawah halaman Meet (muncul saat dalam panggilan) menyembunyikan tampilan caption tanpa mematikan CC — transkrip tetap terisi. Klik lagi untuk menampilkan; pilihan diingat lintas rapat.
 
 ---
 

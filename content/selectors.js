@@ -13,13 +13,16 @@
     return null;
   };
 
+  // Diekspor juga: captionhide.js memakainya sebagai selector CSS untuk
+  // menyembunyikan container yang sama.
+  const CAPTION_REGION = [
+    'div[jsname="dsyhDe"]',        // container caption (build 2024-2025)
+    'div[aria-label="Captions"]',  // fallback aria (UI English)
+    'div[aria-label="Teks"]',      // fallback aria (UI Indonesia)
+    '.a4cQT',                      // class container lama
+  ];
   function captionsRegion() {
-    return q([
-      'div[jsname="dsyhDe"]',        // container caption (build 2024-2025)
-      'div[aria-label="Captions"]',  // fallback aria (UI English)
-      'div[aria-label="Teks"]',      // fallback aria (UI Indonesia)
-      '.a4cQT',                      // class container lama
-    ]);
+    return q(CAPTION_REGION);
   }
 
   function captionBlocks(region) {
@@ -93,6 +96,6 @@
 
   globalThis.MeetSelectors = {
     captionsRegion, captionBlocks, blockSpeaker, blockText,
-    ccButton, ccEnabled, inCall, meetingTitle,
+    ccButton, ccEnabled, inCall, meetingTitle, CAPTION_REGION,
   };
 })();
