@@ -483,6 +483,22 @@ async function renderSettings(epoch) {
   hideRow.append(hideLabel);
   view.append(hideRow);
 
+  // Pemilih bahasa milik Meet hidup DI DALAM area caption, jadi ia ikut
+  // tersembunyi oleh checkbox di atas. Tanpa kontrol ini bahasa caption tak
+  // terjangkau sama sekali di Firefox — popup yang memegangnya di Chrome tidak
+  // ada di sana (ikon Firefox membuka sidebar, dan tak ada tabCapture yang
+  // membuat popup itu perlu).
+  const captionLang = field('Bahasa caption Meet', document.createElement('select'));
+  for (const [val, label] of [['id', 'Indonesia'], ['en', 'English']]) {
+    captionLang.append(Object.assign(document.createElement('option'), { value: val, textContent: label }));
+  }
+  captionLang.value = settings.captionLang ?? 'id';
+  // Ditulis langsung saat diubah, alasan yang sama dengan hideCaptions di atas.
+  captionLang.addEventListener('change', async () => {
+    const cur = (await chrome.storage.local.get('settings')).settings ?? {};
+    await chrome.storage.local.set({ settings: { ...cur, captionLang: captionLang.value } });
+  });
+
   // Mic opsional (Chrome-only), dicampur ke rekaman tab. Izinnya hanya bisa
   // diminta dari window extension sungguhan yang dibuka SW — tombol di sini
   // untuk setup di awal; kalau belum, SW memintanya sendiri saat rekam mulai.
@@ -705,6 +721,9 @@ async function renderSettings(epoch) {
         momTemplate: template.value,
         transcriptSource: source.value,
         hideCaptions: hideBox.checked,
+        // WAJIB ikut: blok ini menulis objek settings UTUH, bukan menggabung ke
+        // yang tersimpan — kunci yang tidak disebut di sini hilang tiap Simpan.
+        captionLang: captionLang.value,
         mic: micBox.checked,
         sttMode: sttModeSel.value,
         sttModel: sttModel.value.trim() || ST.DEFAULT_API_MODEL,

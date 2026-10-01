@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Meet Transcript",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Transkrip Google Meet & rekam panggilan Discord web dari caption/audio (STT API atau server lokal), jadi Minutes of Meeting.",
   "minimum_chrome_version": "116",
   "permissions": ["sidePanel", "storage", "unlimitedStorage", "tabCapture", "offscreen", "activeTab", "contextMenus", "scripting"],
