@@ -170,13 +170,19 @@ async function start(msg) {
   stream = await navigator.mediaDevices.getUserMedia(constraints);
   const vTrack = stream.getVideoTracks()[0];
   if (vTrack) vTrack.contentHint = 'detail';
+  // Picker memunculkan bar "Stop sharing" milik Chrome, dan tab yang ditutup
+  // mengakhiri track dengan cara yang sama. Tanpa ini recorder terus jalan di
+  // track mati: chunk kosong, transkrip kosong, dan baru ketahuan di akhir.
+  // track.stop() milik kita sendiri TIDAK memicu 'ended', jadi stop normal
+  // tidak lewat sini.
+  stream.getAudioTracks()[0]?.addEventListener('ended', () => toSW({ type: 'stop-recording' }));
   // Meta ditulis sebelum chunk pertama: meetingId + waktu mulai sudah
   // tersimpan walau rekaman nanti mati di tengah.
   await globalThis.MeetAudioStore.beginAudio(
     { meetingId: msg.meetingId, chunkMs: msg.chunkMs, baseTime: msg.baseTime });
-  // Re-inject: tabCapture membisukan tab; putar balik ke speaker.
   audioCtx = new AudioContext();
   const src = audioCtx.createMediaStreamSource(stream);
+  // Re-inject: tabCapture membisukan tab; putar balik ke speaker.
   src.connect(audioCtx.destination);
   // Semua recorder merekam SATU campuran (tab + mic opsional), bukan track tab
   // mentah: mic bisa bergabung belakangan (izin diberikan di tengah rekaman)

@@ -58,6 +58,40 @@
     return clone.textContent.replace(blockSpeaker(block), '').trim();
   }
 
+  // Pemilih bahasa caption. Ada DI DALAM region caption (diverifikasi di DOM
+  // Meet 2026-10-01), jadi ikut tersembunyi saat hideCaptions aktif — dan
+  // itulah alasan pilihannya dipindah ke popup. .click() programatik tetap
+  // bekerja pada elemen display:none, jadi tetap bisa disetir dari sana.
+  function langCombobox() {
+    return q([
+      'div[jsname="oYxtQd"][role="combobox"]',
+      '[role="combobox"][aria-label*="language" i]',
+      '[role="combobox"][aria-label*="bahasa" i]',
+    ]);
+  }
+
+  // Label bahasa ADALAH string DOM Meet, jadi tempatnya di sini bersama selector
+  // lain. Dijangkarkan ke AWAL label: /indonesia/i polos juga cocok dengan
+  // "Javanese (Indonesia)" dan akan memilih bahasa yang salah. Dua ejaan per
+  // bahasa karena label mengikuti bahasa UI Meet, bukan bahasa captionnya:
+  // "Indonesian (Indonesia)" di UI Inggris, "Inggris (…)" di UI Indonesia.
+  const LANG_PATTERN = {
+    id: /^(bahasa\s+)?indonesian?\b/i,
+    en: /^(english|inggris)\b/i,
+  };
+
+  // Opsi bahasa sudah ada di DOM walau menu tertutup. Dicocokkan lewat LABEL,
+  // bukan class: nama class Meet berubah tiap beberapa bulan, nama bahasa
+  // tidak. Yang TERPENDEK menang — "English" mengalahkan "English (Australia)"
+  // dan "English (India)" yang sama-sama cocok.
+  function langOption(re) {
+    const hits = [...document.querySelectorAll('[role="option"]')]
+      .map((o) => [o, o.textContent.trim()])
+      .filter(([, t]) => re.test(t));
+    hits.sort((a, b) => a[1].length - b[1].length);
+    return hits[0]?.[0] ?? null;
+  }
+
   function ccButton() {
     return q([
       'button[jsname="r8qRAd"]',
@@ -97,5 +131,6 @@
   globalThis.MeetSelectors = {
     captionsRegion, captionBlocks, blockSpeaker, blockText,
     ccButton, ccEnabled, inCall, meetingTitle, CAPTION_REGION,
+    langCombobox, langOption, LANG_PATTERN,
   };
 })();

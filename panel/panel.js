@@ -10,16 +10,12 @@ let recState = { recording: false, transcribing: false, done: 0, total: 0, error
 // disembunyikan. Tombol audio di Riwayat TIDAK perlu digate: syaratnya
 // audioMeta milik meeting itu, dan di Firefox tak pernah ada audio tersimpan.
 const HAS_AUDIO = !!chrome.tabCapture;
+
 let settingsCache = {};
 async function loadSettings() { settingsCache = (await chrome.storage.local.get('settings')).settings ?? {}; }
 
-// el(): SELALU textContent — teks caption/nama pembicara tidak dipercaya.
-const el = (tag, cls, text) => {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text != null) e.textContent = text;
-  return e;
-};
+// Dipakai bersama popup — lihat lib/ui.js.
+const { el, mkBtn, mkDropdown } = globalThis.MeetUi;
 
 // Side panel tidak punya console yang dilihat user, dan halaman Errors di
 // chrome://extensions cuma menampilkan stack minified milik vendor TANPA baris
@@ -39,6 +35,12 @@ function reportError(what, e) {
 addEventListener('unhandledrejection', (ev) => reportError('Promise gagal', ev.reason));
 addEventListener('error', (ev) => reportError('Error', ev.error ?? ev.message));
 
+function selectTab(name) {
+  tab = name;
+  viewingId = null;
+  document.querySelectorAll('nav button').forEach((x) => x.classList.toggle('active', x.dataset.tab === name));
+}
+
 document.querySelectorAll('nav button').forEach((b) =>
   b.addEventListener('click', () => {
     // Hanya Settings yang dilindungi: menggambar ulang di sana membuang semua
@@ -47,14 +49,21 @@ document.querySelectorAll('nav button').forEach((b) =>
     // refresh lain, jadi memblokirnya membuat meeting baru tak pernah muncul
     // sampai user memantul ke tab lain dan kembali.
     if (b.dataset.tab === tab && tab === 'settings') return;
-    tab = b.dataset.tab;
-    viewingId = null;
-    document.querySelectorAll('nav button').forEach((x) => x.classList.toggle('active', x === b));
+    selectTab(b.dataset.tab);
     render();
   })
 );
 
 chrome.runtime.onMessage.addListener((msg) => {
+  // Dibuka dari popup selagi panel ini SUDAH terbuka: tak ada init kedua yang
+  // membaca get-active, jadi perpindahannya datang sebagai pesan.
+  if (msg.type === 'open-panel-tab') {
+    selectTab(msg.tab);
+    if (msg.id) viewingId = msg.id;
+    chrome.runtime.sendMessage({ type: 'panel-tab-consumed' }).catch(() => {});
+    render();
+    return;
+  }
   if (msg.type === 'status') {
     // Ganti meeting = keluhan rekaman meeting sebelumnya tidak berlaku lagi.
     // recState.error satu slot global tanpa pemilik, jadi tanpa ini error dari
@@ -160,12 +169,6 @@ let lastRenderedKey = null; // view terakhir yang digambar renderMeeting (id|liv
 let audioMeta = null;       // hasil audio-meta terakhir
 let audioMetaKey = null;    // view key yang menghasilkannya (null = wajib tanya lagi)
 const momErrors = new Map(); // meetingId → pesan error MoM terakhir
-let openMenu = null;         // key dropdown yang terbuka (copy|mom|unduh); bertahan antar render
-// Dropdown menutup saat klik di luar — <details> tidak punya light-dismiss.
-// Satu listener global; `open = false` memicu toggle → openMenu ikut null.
-document.addEventListener('click', (e) => {
-  document.querySelectorAll('details.menu[open]').forEach((d) => { if (!d.contains(e.target)) d.open = false; });
-});
 
 async function render() {
   const epoch = ++renderEpoch;
@@ -218,9 +221,11 @@ async function renderMeeting(id, live, epoch) {
       stop.addEventListener('click', () => chrome.runtime.sendMessage({ type: 'stop-recording' }));
       bar.append(stop, el('span', 'muted', ' ● merekam'));
     } else {
-      // tabCapture butuh invocation activeTab yang tidak diberikan tombol side
-      // panel (batasan Chrome) — start dipicu dari context menu halaman Meet.
-      bar.append(el('span', 'muted', 'Untuk mulai: klik kanan di halaman Meet → "Rekam audio meeting" (atau "Rekam audio + video meeting").'));
+      // Start TIDAK bisa dari sini: tabCapture butuh izin per-tab yang hanya
+      // diberikan invocation activeTab, dan klik di side panel bukan salah
+      // satunya — Chrome menolak dengan "Extension has not been invoked for
+      // the current page". Tombolnya ada di popup ikon toolbar (popup/popup.js).
+      bar.append(el('span', 'muted', 'Mulai rekam dari ikon extension → Rekam.'));
     }
     if (recState.error) bar.append(el('div', 'err', ' ' + recState.error));
     view.append(bar);
@@ -239,7 +244,10 @@ async function renderMeeting(id, live, epoch) {
 
   if (!meeting) {
     view.append(el('p', 'muted',
-      live ? 'Tidak ada meeting aktif. Join Google Meet dulu.' : 'Meeting tidak ditemukan.'));
+      // Rekaman tab non-Meet tak punya record "aktif" di view ini (content
+      // script cuma melacak ruang Meet), jadi hasilnya mendarat di Riwayat.
+      !live ? 'Meeting tidak ditemukan.'
+        : 'Tidak ada meeting Meet aktif. Tombol Rekam di atas tetap jalan untuk tab aktif (Discord dsb.) — hasilnya masuk ke Riwayat.'));
     return;
   }
 
@@ -266,12 +274,7 @@ async function renderMeeting(id, live, epoch) {
   // Panel cuma ~350px — tujuh tombol sejajar jadi empat baris. Tiga dropdown
   // (Copy / MoM / Unduh) + Transkrip ulang muat satu baris.
   const actions = el('div', 'actions');
-  const btn = (label, fn, box = actions) => {
-    const b = el('button', null, label);
-    b.addEventListener('click', fn);
-    box.append(b);
-    return b;
-  };
+  const btn = (label, fn, box = actions) => mkBtn(label, fn, box);
   // Label balik sendiri: tab Live menggambar ulang tiap 2 detik sehingga
   // tombolnya ter-reset, tapi view meeting di Riwayat tidak — di sana "Disalin ✓"
   // menetap selamanya dan klik berikutnya tak memberi umpan balik apa pun.
@@ -281,23 +284,7 @@ async function renderMeeting(id, live, epoch) {
     clearTimeout(Number(b.dataset.timer));
     b.dataset.timer = String(setTimeout(() => { b.textContent = asli; }, ms));
   };
-  // Dropdown <details> native (tanpa JS buka-tutup). Menu menutup begitu item
-  // diklik, jadi umpan balik aksi ditulis ke label summary (`head`) — tombol
-  // di dalam menu yang berubah label tak akan terlihat siapa pun. Yang
-  // terbuka diingat lewat openMenu: tab Live merender ulang tiap 2 detik.
-  const dropdown = (key, label) => {
-    const menu = el('details', 'menu');
-    const head = el('summary', null, label + ' ▾');
-    const list = el('div', 'menu-list');
-    menu.append(head, list);
-    menu.open = openMenu === key;
-    menu.addEventListener('toggle', () => {
-      if (menu.open) openMenu = key; else if (openMenu === key) openMenu = null;
-    });
-    actions.append(menu);
-    const item = (text, fn) => btn(text, () => { menu.open = false; fn(); }, list);
-    return { head, list, item, label: label + ' ▾' };
-  };
+  const dropdown = (key, label) => mkDropdown(actions, key, label);
 
   const copy = dropdown('copy', 'Copy');
   const copyTo = (text) => async () => {
@@ -476,6 +463,25 @@ async function renderSettings(epoch) {
     source.append(Object.assign(document.createElement('option'), { value: val, textContent: label }));
   }
   source.value = settings.transcriptSource ?? 'caption';
+
+  // Caption disembunyikan dari layar Meet secara bawaan (content/captionhide.js)
+  // — CC tetap nyala, transkrip tetap jalan. Checkbox ini satu-satunya jalan
+  // menampilkannya lagi.
+  const hideBox = Object.assign(document.createElement('input'),
+    { type: 'checkbox', checked: settings.hideCaptions !== false });
+  const hideLabel = el('label');
+  hideLabel.append(hideBox, 'Sembunyikan caption di layar Meet (transkrip tetap jalan)');
+  // Ditulis LANGSUNG saat diubah, tak menunggu Simpan: jalur Simpan bisa
+  // ditolak karena URL LLM yang salah — soal yang tak ada hubungannya dengan
+  // menampilkan caption. Digabung ke settings TERSIMPAN, bukan isi form, supaya
+  // editan lain yang belum disimpan tidak ikut tertulis.
+  hideBox.addEventListener('change', async () => {
+    const cur = (await chrome.storage.local.get('settings')).settings ?? {};
+    await chrome.storage.local.set({ settings: { ...cur, hideCaptions: hideBox.checked } });
+  });
+  const hideRow = el('div');
+  hideRow.append(hideLabel);
+  view.append(hideRow);
 
   // Mic opsional (Chrome-only), dicampur ke rekaman tab. Izinnya hanya bisa
   // diminta dari window extension sungguhan yang dibuka SW — tombol di sini
@@ -698,6 +704,7 @@ async function renderSettings(epoch) {
         model: model.value.trim() || 'gpt-4o-mini',
         momTemplate: template.value,
         transcriptSource: source.value,
+        hideCaptions: hideBox.checked,
         mic: micBox.checked,
         sttMode: sttModeSel.value,
         sttModel: sttModel.value.trim() || ST.DEFAULT_API_MODEL,
@@ -793,5 +800,10 @@ chrome.storage.onChanged.addListener((c, area) => {
   const a = await chrome.runtime.sendMessage({ type: 'get-active' }).catch(() => null);
   if (a) status = a;
   if (a?.rec) recState = { ...recState, recording: a.rec.recording, transcribing: a.rec.transcribing };
+  // Dibuka dari popup: mendarat di tab yang diminta, dan kalau judul meeting
+  // yang diklik — langsung di detail meeting itu. viewingId diisi SESUDAH
+  // selectTab, yang justru mengosongkannya.
+  if (a?.panelTab) selectTab(a.panelTab);
+  if (a?.panelMeetingId) viewingId = a.panelMeetingId;
   render();
 })();

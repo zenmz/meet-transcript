@@ -10,10 +10,13 @@
 
 **Meet Transcript** adalah ekstensi Google Chrome yang terintegrasi langsung pada *side panel* Google Meet. Ekstensi ini menangkap transkrip caption secara *real-time* selama rapat berlangsung dan secara otomatis merangkumnya menjadi *Minutes of Meeting* (MoM). Transkrip dari rekaman audio muncul setelah perekaman dihentikan.
 
+Selain Google Meet, **panggilan suara Discord di peramban** (`discord.com/channels/…`) juga dapat direkam dan ditranskripsi lewat jalur audio + STT. Discord tidak punya *live caption*, jadi di sana hanya mode rekam audio yang berlaku — tanpa nama pembicara, dan perekaman dihentikan manual.
+
 Seluruh data rapat disimpan secara lokal di peramban (*browser*) Anda. Tanpa server perantara, dan Anda memiliki kendali penuh atas *endpoint* STT (Speech-to-Text) maupun LLM (Large Language Model) yang digunakan — termasuk *server* Whisper di jaringan Anda sendiri. Baca bagian [Keamanan & Privasi](#-keamanan--privasi) untuk mengetahui persis data apa yang keluar pada tiap mode.
 
 ## ✨ Fitur Utama
 
+* **Popup Aksi Cepat:** Klik ikon ekstensi membuka popup ringkas — **Rekam** (audio / audio + video), **Bahasa caption** (Indonesia / English), **Tampilkan detail** (membuka side panel), dan **Riwayat meet** yang membuka rapat pilihan langsung di halaman detailnya.
 * **Multi-Sumber Transkripsi:** Menggabungkan *caption* bawaan Google Meet (menyertakan nama pembicara) dan rekaman audio *tab* (via STT) dalam satu linimasa rapat, diurutkan menurut waktu.
 * **Rekam Video (Opsional):** Rekam isi *tab* Meet sebagai satu fail `.webm` (720p, VP9, ±250 MB/jam) lewat menu klik kanan **Rekam audio + video meeting** — transkrip audio tetap berjalan seperti biasa.
 * **Rekam Mikrofon (Opsional):** Bawaan hanya suara peserta lain (audio *tab*) yang terekam. Centang **Rekam mikrofon** di Settings agar suara Anda ikut dicampur ke rekaman audio dan video; izin mikrofon diminta sekali lewat jendela kecil.
@@ -25,7 +28,9 @@ Seluruh data rapat disimpan secara lokal di peramban (*browser*) Anda. Tanpa ser
 * **Sadar Rapat Berulang:** Rapat *recurring* memakai link (kode ruang) yang sama — setiap sesi tetap menjadi entri Riwayat terpisah. Jeda lebih dari 30 menit setelah rapat berakhir dianggap sesi baru; keluar-masuk sebentar tetap tersambung ke sesi yang sama.
 * **Penyelamatan Audio Cerdas:** Potongan audio disimpan ke IndexedDB selama proses perekaman. Jika terjadi kesalahan konfigurasi STT, Anda cukup melakukan "Transkrip ulang" tanpa kehilangan data audio.
 * **Siklus Hidup Otomatis:** Perekaman berhenti otomatis saat rapat selesai (keluar panggilan, pindah ruang, atau *tab* ditutup).
-* **Sembunyikan Caption:** Tombol berikon Meet Transcript di pojok kanan bawah halaman Meet (muncul saat dalam panggilan) menyembunyikan tampilan caption tanpa mematikan CC — transkrip tetap terisi. Klik lagi untuk menampilkan; pilihan diingat lintas rapat.
+* **Caption Tersembunyi (Bawaan):** Tampilan caption di layar Meet disembunyikan tanpa mematikan CC — tile video tetap penuh, transkrip tetap terisi di panel. Ingin melihat caption lagi? Matikan **Sembunyikan caption di layar Meet** di Settings.
+* **Bahasa Caption dari Popup:** Pemilih bahasa milik Meet berada di dalam area caption, jadi ikut tersembunyi oleh butir di atas. Pilihan **Indonesia** (bawaan) / **English** di popup menerapkannya langsung ke Meet, sekali tiap panggilan — pergantian manual di UI Meet tetap dihormati.
+* **Rekam Discord Web:** Panggilan suara di `discord.com/channels/…` ikut bisa direkam (audio, atau audio + video tab). Hanya versi web — aplikasi desktop Discord di luar jangkauan ekstensi.
 
 ---
 
@@ -68,9 +73,9 @@ Pasang langsung dari Add-ons resmi Mozilla: **[Meet Transcript di Firefox Add-on
 
 ## 📖 Penggunaan Dasar (Quick Start)
 
-1. **Mulai Rapat:** Bergabunglah ke Google Meet. Ekstensi akan mencoba mengaktifkan *Closed Captions* (CC) secara otomatis. Jika gagal, aktifkan manual melalui *toolbar* Meet.
-2. **Buka Panel:** Klik ikon ekstensi untuk membuka *side panel* (Firefox: *sidebar*). *Tab* **Live** akan mulai terisi secara otomatis.
-3. **Rekam Audio/Video (Opsional):** Klik kanan pada area mana saja di halaman Meet, lalu pilih **Rekam audio meeting** (atau **Rekam audio + video meeting** untuk ikut merekam tampilan *tab*).
+1. **Mulai Rapat:** Bergabunglah ke Google Meet. Ekstensi akan mencoba mengaktifkan *Closed Captions* (CC) secara otomatis. Caption **tidak tampil di layar** (disembunyikan bawaan) — cek *tab* **Live** di panel untuk memastikan transkrip masuk. Jika kosong, lihat tombol CC di *toolbar* Meet: ikon tersorot berarti aktif; jika tidak, klik sekali.
+2. **Buka Panel:** Klik ikon ekstensi → popup muncul → **Tampilkan detail** membuka *side panel* (Firefox: klik ikon langsung membuka *sidebar*). *Tab* **Live** akan mulai terisi secara otomatis.
+3. **Rekam Audio/Video (Opsional):** Klik ikon ekstensi → **Rekam** → *Audio saja* atau *Audio + video*. Bisa juga lewat klik kanan di halaman, atau pintasan `Alt+Shift+R` / `Alt+Shift+V`.
 4. **Hasilkan MoM:** Setelah rapat selesai, buka *tab* **Riwayat** → pilih rapat → buka dropdown **Generate MoM** → **Generate MoM** (atau **Kirim ke Gemini** / **Kirim ke ChatGPT** tanpa API key). Dropdown **Copy** berisi *Copy transkrip* / *Copy Prompt+Transkrip*; dropdown **Unduh** berisi *.txt*, *.md*, dan audio/video rekaman bila ada.
 
 **Konfigurasi Awal (Settings):**
@@ -85,12 +90,13 @@ Anda dapat merekam audio *tab* untuk ditranskripsi via STT, baik secara mandiri 
 ### Cara Merekam Audio
 
 1. Buka menu **Settings** → set **Sumber transkrip** = *Rekam audio* agar blok **Mode STT** terlihat → konfigurasikan **Mode STT**. (Setelah dikonfigurasi, perekaman tetap bisa dipakai sambil *Sumber transkrip* dikembalikan ke *Caption Meet* — mode STT yang tersimpan tetap dipakai.)
-2. Di dalam panggilan Meet, **klik kanan** pada halaman → pilih **Rekam audio meeting**, atau **Rekam audio + video meeting** untuk ikut merekam tampilan *tab* (720p VP9, ±250 MB/jam, diunduh sebagai satu fail `.webm` lewat tombol **Unduh video** di Riwayat).
-3. Perekaman akan berhenti otomatis jika Anda keluar dari panggilan. Anda juga dapat menghentikannya secara manual via panel atau menu klik kanan.
+2. Di dalam panggilan, mulai rekam lewat salah satu dari tiga jalur: **popup ikon ekstensi** → *Rekam*, **klik kanan** di halaman, atau pintasan keyboard. Pilihan *Audio + video* ikut merekam tampilan *tab* (720p VP9, ±250 MB/jam, diunduh sebagai satu fail `.webm` lewat tombol **Unduh video** di Riwayat).
+3. Di Google Meet, perekaman berhenti otomatis saat Anda keluar panggilan. **Di Discord tidak** — tidak ada pelacak sesi di sana, jadi hentikan sendiri lewat popup, panel, atau klik kanan → **Stop rekam**.
 
 **Catatan Penting:**
 
-* Karena batasan kebijakan keamanan Chrome, inisiasi perekaman (`tabCapture`) hanya dapat dipicu melalui klik *context menu* (klik kanan), bukan dari tombol di *side panel*.
+* Karena batasan keamanan Chrome, `tabCapture` menuntut izin per-*tab* yang hanya diberikan oleh *invocation* ekstensi: klik ikon (popup), klik *context menu*, atau pintasan keyboard. Tombol di *side panel* maupun tombol yang disuntik ke halaman **tidak** memenuhi syarat itu — Chrome menolaknya dengan *"Extension has not been invoked for the current page"*. Karena itulah tombol **Rekam** hidup di popup, bukan di panel; panel hanya memegang **Stop rekam**.
+* Pintasan bawaan: `Alt+Shift+R` (audio), `Alt+Shift+V` (audio + video), `Alt+Shift+S` (stop). Dapat diubah di `chrome://extensions/shortcuts`. Berguna di Discord, yang menelan *event* `contextmenu` sehingga menu klik kanan bawaan peramban tidak muncul (`Shift`+klik kanan memaksanya muncul).
 * Bawaan: hanya suara peserta lain (*tab audio*) yang direkam. Centang **Rekam mikrofon** di *Settings* agar suara Anda ikut, lalu klik **Izinkan mikrofon** sekali untuk memberi izin (kalau belum, jendela izin muncul otomatis saat rekaman dimulai; rekaman *tab* tetap jalan dan mic bergabung begitu disetujui). Tanpa headset, suara peserta dari speaker bisa ikut terekam lewat mic (dobel).
 * Setiap 10 menit, potongan audio disimpan ke IndexedDB untuk mencegah kehilangan data jika peramban tertutup mendadak. Potongan tersebut dapat diunduh kapan saja melalui tombol **Unduh audio** sebagai fail `.webm` terpisah (membutuhkan izin *"Download multiple files"* pada Chrome bila lebih dari satu potongan).
 * Hanya audio dari rekaman **terakhir** yang disimpan. Jika Anda memulai perekaman baru, data audio sebelumnya akan dihapus.
@@ -121,9 +127,11 @@ Ekstensi ini dirancang dengan pendekatan *privacy-first*:
 
 ## 🛠️ Pemecahan Masalah (Troubleshooting)
 
-* **Transkrip tidak muncul meskipun *caption* menyala:** Google mungkin telah memperbarui struktur DOM Meet. Ekstensi akan menampilkan peringatan jika *caption* aktif namun teks tidak terbaca selama 30 detik. (Bagi *developer*, perbarui penyeleksi pada `content/selectors.js`).
+* **Transkrip tidak muncul meskipun tombol CC Meet aktif:** (caption sendiri tidak tampil di layar karena disembunyikan bawaan — matikan **Sembunyikan caption di layar Meet** di Settings kalau ingin memastikan secara visual.) Google mungkin telah memperbarui struktur DOM Meet. Ekstensi akan menampilkan peringatan jika *caption* aktif namun teks tidak terbaca selama 30 detik. (Bagi *developer*, perbarui penyeleksi pada `content/selectors.js`).
 * **Tab Live menunjuk rapat lama, atau perekaman tidak berhenti sendiri:** Google Meet adalah aplikasi SPA — pindah ruang dan keluar panggilan hanya mengganti URL pada dokumen yang sama. Pelacakan sesi ditangani `content/session.js` (murni, diuji pada `test/session.test.mjs`).
 * **Transkrip audio kosong:** Periksa URL *endpoint* atau model STT di pengaturan Anda. Setelah diperbaiki, klik **Transkrip ulang** pada riwayat rapat terkait (audio asli masih tersimpan).
+* **Caption tetap tampil setelah ekstensi di-*reload*:** *Content script* di *tab* yang sudah terbuka menjadi yatim saat ekstensi dimuat ulang, dan ia sengaja melepas sendiri gaya penyembunyi caption (kalau tidak, caption terkunci tersembunyi dan tak terjangkau Settings). Muat ulang *tab* Meet-nya.
+* **Bahasa caption tidak berganti:** Ekstensi mencoba maksimal 3 kali per panggilan lalu berhenti. Kalau Google mengubah struktur pemilih bahasa, perbaiki `langCombobox()`/`langOption()` di `content/selectors.js`.
 * **Peringatan "Belum ada suara masuk":** Tanpa opsi **Rekam mikrofon**, sistem hanya menangkap suara peserta lain. Jika tidak ada orang lain yang berbicara, maka tidak ada audio yang diproses.
 * **Log Eror:** Jika terjadi kesalahan pada *side panel*, pesan *error* dan *stack trace* dapat disorot dan disalin langsung dari antarmuka panel.
 
@@ -136,10 +144,11 @@ Proyek ini dibangun tanpa *build step* yang kompleks (tanpa `npm install`), meng
 **Struktur Direktori:**
 
 * `background/` : *Service worker*, manajemen status, penyimpanan, dan siklus hidup.
-* `content/` : Logika injeksi DOM Meet (`selectors.js`, `session.js`, `captions.js`).
+* `content/` : Logika injeksi DOM Meet (`selectors.js`, `session.js`, `captions.js`, `captionhide.js`, `captionlang.js`). **Semua** penyeleksi DOM Meet tinggal di `selectors.js` — termasuk pola label bahasa.
 * `panel/` : Antarmuka pengguna (*Live*, *Riwayat*, *Settings*).
+* `popup/` : Popup ikon toolbar (Rekam, Bahasa caption, Riwayat) — satu-satunya permukaan UI yang boleh memulai `tabCapture`.
 * `offscreen/` : Modul perekaman audio/video *tab* dan orkestrasi STT (service worker MV3 bisa mati di tengah unggahan panjang).
-* `lib/` : Utilitas inti (`openai.js`, `stt.js`, `audiostore.js`/IndexedDB, `merge.js`).
+* `lib/` : Utilitas inti (`openai.js`, `stt.js`, `audiostore.js`/IndexedDB, `merge.js`, `ui.js` — helper DOM yang dipakai panel dan popup).
 * `manifest.firefox.json` : manifest untuk build Firefox (`sidebar_action`, *event page*, tanpa `tabCapture`/`offscreen`) — versinya wajib sama dengan `manifest.json`.
 * `test/` · `scripts/` · `icons/` · `docs/` : pengujian Node, skrip rilis, ikon, dan catatan desain internal.
 

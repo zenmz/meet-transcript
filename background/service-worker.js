@@ -5,12 +5,17 @@ if (typeof importScripts === 'function') {
   importScripts('/lib/merge.js', '/lib/openai.js', '/lib/stt.js', '/lib/audiostore.js');
 }
 
-chrome.sidePanel?.setPanelBehavior({ openPanelOnActionClick: true });
+// TIDAK memakai setPanelBehavior({openPanelOnActionClick}): action punya
+// default_popup, dan popup selalu menang — klik ikon membuka popup, dan
+// tombol "Tampilkan detail" di situ yang memanggil sidePanel.open(). Popup wajib
+// karena hanya invocation action yang memberi activeTab untuk tab aktif, syarat
+// tabCapture.getMediaStreamId; klik di side panel tidak pernah dapat.
 // Firefox: tidak ada sidePanel — klik ikon toolbar men-toggle sidebar. toggle()
 // wajib dipanggil sinkron di dalam handler (butuh user gesture). Di Chrome
-// listener ini tidak didaftarkan; klik ikon sudah ditangani setPanelBehavior.
+// listener ini tidak didaftarkan, dan tak akan terpicu juga: action di sana
+// punya default_popup.
 if (chrome.sidebarAction) {
-  chrome.action.onClicked.addListener(() => chrome.sidebarAction.toggle());
+  chrome.action?.onClicked.addListener(() => chrome.sidebarAction.toggle());
 }
 
 // Status meeting aktif. Hilang saat SW idle-restart — dipulihkan oleh pesan
@@ -21,12 +26,16 @@ function notifyPanel(msg) {
   chrome.runtime.sendMessage(msg).catch(() => {}); // panel tertutup → abaikan
 }
 
-// Titik merekam di ikon toolbar: indikator saat panel ditutup.
-chrome.action.setBadgeBackgroundColor({ color: '#d93025' });
-chrome.action.setBadgeTextColor?.({ color: '#ffffff' }); // titik putih di badge merah
+// Titik merekam di ikon toolbar: indikator saat panel ditutup. Semua lewat
+// `chrome.action?.`: badge cuma hiasan, dan satu throw di baris teratas ini
+// mematikan seluruh service worker (tak satu pun listener terdaftar) — pernah
+// terlihat sebagai "Cannot read properties of undefined (reading
+// 'setBadgeBackgroundColor')" di halaman Errors.
+chrome.action?.setBadgeBackgroundColor({ color: '#d93025' });
+chrome.action?.setBadgeTextColor?.({ color: '#ffffff' }); // titik putih di badge merah
 function updateBadge() {
   const recording = (active.inCall && active.captionsOn) || rec.recording;
-  chrome.action.setBadgeText({ text: recording ? '●' : '' });
+  chrome.action?.setBadgeText({ text: recording ? '●' : '' });
 }
 
 // Mode audio: state rekaman + lifecycle offscreen document.
@@ -38,6 +47,9 @@ let rec = { recording: false, transcribing: false, meetingId: null };
 // tak pernah dibuat → delete() resolve false, tanpa efek.
 chrome.runtime.onInstalled.addListener(() => {
   globalThis.caches?.delete('transformers-cache')?.catch(() => {});
+  // Key toggle caption versi 0.5.1 (tombol di halaman, sudah dibuang) —
+  // penerusnya settings.hideCaptions. Dibersihkan supaya tak ikut ke backup.
+  chrome.storage.local.remove('captionsHidden').catch(() => {});
 });
 
 // Judul tab Meet: Chrome menaruh "Meet" di DEPAN (`Meet – abc-defg-hij`), tapi
@@ -45,10 +57,19 @@ chrome.runtime.onInstalled.addListener(() => {
 // Sisa yang kosong atau cuma meeting id bukan judul yang berguna.
 function titleFromTab(tabTitle, meetingId) {
   const t = String(tabTitle ?? '')
+    .replace(/^\(\d+\)\s*/, '') // Discord menaruh hitungan unread di depan judul
     .replace(/^Meet\s*[-—–]\s*/, '')
     .replace(/\s*[-—–]\s*Google Meet\s*$/, '')
     .trim();
   return !t || t === meetingId ? meetingId : t;
+}
+
+// Kegagalan start rekam SELALU juga ke console service worker: satu-satunya
+// penerima broadcastRec adalah side panel, jadi gagal saat panel tertutup
+// (jalur normal untuk shortcut keyboard) tidak terlihat di mana pun.
+function recError(error) {
+  console.warn('[rec]', error);
+  broadcastRec({ error });
 }
 
 function broadcastRec(extra = {}) {
@@ -80,64 +101,103 @@ async function ensureOffscreen() {
 
 // Start rekam dipicu dari context menu halaman Meet: klik context menu memberi
 // invocation activeTab yang dibutuhkan tabCapture.getMediaStreamId — tombol
-// side panel tidak (batasan Chrome).
+// side panel atau tombol yang disuntik ke halaman tidak (batasan Chrome:
+// getMediaStreamId cek izin per-tab kTabCaptureForTab yang hanya diberikan
+// activeTab; host permission apa pun, termasuk <all_urls>, tidak cukup).
 const MEET_RE = /^[a-z]{3}-[a-z]{4}-[a-z]{3}$/;
+// Discord tidak punya kode ruang: pasangan guild+channel di /channels/<g>/<c>
+// adalah satu-satunya bagian URL yang stabil, jadi itu yang dipakai jadi id.
+// "@me" (DM) dipetakan ke "dm" — id ikut jadi bagian nama file unduhan, dan "@"
+// di nama file ditangani beda-beda tiap OS.
+const DISCORD_RE = /^\/channels\/(@me|\d+)\/(\d+)/;
 function meetingIdFromUrl(url) {
   try {
-    const p = new URL(url).pathname.slice(1);
+    const { hostname, pathname } = new URL(url);
+    if (hostname === 'discord.com') {
+      const m = pathname.match(DISCORD_RE);
+      return m ? `discord-${m[1] === '@me' ? 'dm' : m[1]}-${m[2]}` : null;
+    }
+    const p = pathname.slice(1);
     return MEET_RE.test(p) ? p : null;
   } catch {
     return null;
   }
 }
 
+// Satu jalur start untuk SEMUA pemicu: context menu, shortcut keyboard, dan
+// tombol Rekam di side panel. Guard + cek URL di bawah tak boleh ada dua
+// salinan — salah satunya pasti ketinggalan saat diperbaiki. Hanya dua pemicu
+// pertama yang PASTI membawa invocation activeTab (syarat getMediaStreamId);
+// untuk tombol panel, kegagalannya muncul di catch paling bawah.
+async function startFromTab(tab, video) {
+  // Cek sebelum getMediaStreamId: klik saat sudah merekam tak boleh masuk
+  // catch (yang akan reset state palsu padahal rekaman jalan terus).
+  if (rec.recording || rec.transcribing || await hasOffscreen()) {
+    recError('Rekaman masih berjalan.');
+    return;
+  }
+  // Id DAN rekaman selalu berasal dari SATU tab yang sama — tab yang diklik
+  // kanan, atau tab aktif saat tombol/shortcut dipakai. Tak ada jalur yang
+  // mencampur keduanya: kalau id diambil dari tab lain daripada yang direkam,
+  // yang terekam bisa halaman sunyi sementara record meeting di tab lain yang
+  // kena akibatnya — source dibalik jadi audio, endedAt dihapus, dan audio
+  // tersimpannya dibuang oleh beginAudio.
+  const meetingId = meetingIdFromUrl(tab?.url);
+  if (!meetingId) {
+    recError('Buka halaman ruang Meet / channel Discord-nya dulu — rekaman mengambil audio tab ini. URL tab: ' + (tab?.url ?? '(tidak terbaca)'));
+    return;
+  }
+  try {
+    const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
+    await startRecording({ streamId, meetingId, title: titleFromTab(tab?.title, meetingId), video });
+  } catch (e) {
+    // TIDAK mereset rec di sini: klik kedua yang ditolak karena rekaman
+    // pertama sedang jalan juga mendarat di sini, dan resetnya akan mematikan
+    // status rekaman yang sehat (badge padam, tombol Stop hilang, dan saat
+    // meeting selesai onDisconnect melihat recording:false sehingga rekaman
+    // tak pernah difinalisasi). startRecording yang mereset miliknya sendiri.
+    recError(e.message);
+  }
+}
+
 // Rekam audio butuh tabCapture — tidak ada di Firefox, jadi menu klik-kanan
 // dan seluruh jalur start-nya tidak didaftarkan sama sekali di sana.
 if (chrome.tabCapture) {
+  // Dua platform satu daftar: Meet (caption + audio) dan Discord web (audio
+  // saja — Discord tak punya live caption, dan app desktopnya di luar jangkauan
+  // extension). Discord voice tetap jalan di tab, jadi tabCapture cukup.
+  const RECORDABLE = ['https://meet.google.com/*', 'https://discord.com/channels/*'];
   chrome.runtime.onInstalled.addListener(() => {
     chrome.contextMenus.removeAll(() => {
       chrome.contextMenus.create({ id: 'rec-start', title: 'Rekam audio meeting',
-        contexts: ['page'], documentUrlPatterns: ['https://meet.google.com/*'] });
+        contexts: ['page'], documentUrlPatterns: RECORDABLE });
       // Video opsional & menu terpisah: ±250 MB/jam vs ±30 MB/jam audio saja —
       // user yang cuma butuh transkrip tak boleh membayar disk sebesar itu.
       chrome.contextMenus.create({ id: 'rec-start-video', title: 'Rekam audio + video meeting',
-        contexts: ['page'], documentUrlPatterns: ['https://meet.google.com/*'] });
+        contexts: ['page'], documentUrlPatterns: RECORDABLE });
       chrome.contextMenus.create({ id: 'rec-stop', title: 'Stop rekam',
-        contexts: ['page'], documentUrlPatterns: ['https://meet.google.com/*'] });
+        contexts: ['page'], documentUrlPatterns: RECORDABLE });
     });
   });
 
-  chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  chrome.contextMenus.onClicked.addListener((info, tab) => {
     if (info.menuItemId === 'rec-start' || info.menuItemId === 'rec-start-video') {
-      // Cek sebelum getMediaStreamId: klik saat sudah merekam tak boleh masuk
-      // catch (yang akan reset state palsu padahal rekaman jalan terus).
-      if (rec.recording || rec.transcribing || await hasOffscreen()) {
-        broadcastRec({ error: 'Rekaman masih berjalan.' });
-        return;
-      }
-      // HANYA dari URL tab yang diklik — tanpa fallback ke active.id. tabCapture
-      // merekam TAB INI; kalau ini bukan halaman ruang, yang terekam adalah
-      // halaman landing yang sunyi, sementara meeting sungguhan di tab lain yang
-      // kena akibatnya: source-nya dibalik jadi audio, endedAt dihapus, dan
-      // audio tersimpannya dibuang oleh beginAudio.
-      const meetingId = meetingIdFromUrl(tab?.url);
-      if (!meetingId) {
-        broadcastRec({ error: 'Buka halaman ruang Meet-nya dulu — rekaman mengambil audio tab ini.' });
-        return;
-      }
-      try {
-        const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
-        await startRecording({ streamId, meetingId, title: titleFromTab(tab?.title, meetingId),
-          video: info.menuItemId === 'rec-start-video' });
-      } catch (e) {
-        // TIDAK mereset rec di sini: klik kedua yang ditolak karena rekaman
-        // pertama sedang jalan juga mendarat di sini, dan resetnya akan mematikan
-        // status rekaman yang sehat (badge padam, tombol Stop hilang, dan saat
-        // meeting selesai onDisconnect melihat recording:false sehingga rekaman
-        // tak pernah difinalisasi). startRecording yang mereset miliknya sendiri.
-        broadcastRec({ error: e.message });
-      }
+      startFromTab(tab, info.menuItemId === 'rec-start-video');
     } else if (info.menuItemId === 'rec-stop') {
+      stopRecording();
+    }
+  });
+
+  // Shortcut keyboard: SATU-SATUNYA pemicu lain yang memberi activeTab (selain
+  // klik ikon toolbar, yang di Chrome sudah dipakai untuk membuka side panel).
+  // Wajib ada karena Discord web memanggil preventDefault() pada event
+  // contextmenu — menu klik-kanan native, termasuk item extension, tak pernah
+  // muncul di sana (Shift+klik-kanan memaksanya muncul, tapi itu bukan sesuatu
+  // yang bisa diandalkan untuk diingat user).
+  chrome.commands?.onCommand.addListener((command, tab) => {
+    if (command === 'rec-start' || command === 'rec-start-video') {
+      startFromTab(tab, command === 'rec-start-video');
+    } else if (command === 'rec-stop') {
       stopRecording();
     }
   });
@@ -646,9 +706,37 @@ function sendToAi(text, target, meetingId) {
   });
 }
 
+// Tujuan panel yang baru dibuka dari popup: tab mana, dan (dari daftar Riwayat
+// di popup) meeting mana yang langsung dibuka. Dititipkan ke sini, bukan ke
+// storage: panel memanggil get-active SEBELUM render pertama, jadi tak ada
+// balapan dengan loading halamannya. Sekali pakai — dibaca sekali lalu
+// dikosongkan, supaya panel yang dibuka lain kali tidak melompat ke Riwayat
+// (atau ke meeting lama) tanpa diminta.
+let pendingPanel = null;
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === 'open-panel-tab') {
+    pendingPanel = { tab: msg.tab, id: msg.id ?? null };
+    // Dua jalur, karena panel bisa dalam dua keadaan. sidePanel.open() TIDAK
+    // memuat ulang panel yang sudah terbuka, jadi panel itu tak pernah
+    // memanggil get-active lagi dan titipan di atas takkan pernah dibacanya —
+    // ia harus diberi tahu langsung. Panel yang masih tertutup justru
+    // sebaliknya: siaran ini jatuh ke ruang kosong, dan titipan di atas yang
+    // dipakainya saat init.
+    notifyPanel({ type: 'open-panel-tab', ...pendingPanel });
+    return false;
+  }
+  // Panel sudah menerapkan titipannya lewat siaran di atas. Tanpa ini, titipan
+  // itu menganggur sampai get-active berikutnya — artinya panel yang dibuka
+  // lain kali melompat ke meeting lama tanpa diminta.
+  if (msg.type === 'panel-tab-consumed') {
+    pendingPanel = null;
+    return false;
+  }
   if (msg.type === 'get-active') {
-    sendResponse({ ...active, rec });
+    const panel = pendingPanel;
+    pendingPanel = null;
+    sendResponse({ ...active, rec, panelTab: panel?.tab ?? null, panelMeetingId: panel?.id ?? null });
     return false;
   }
   if (msg.type === 'generate-mom') {
@@ -660,6 +748,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'stop-recording') {
     stopRecording();
+    return false;
+  }
+  // Tombol Rekam di side panel. Tab dibaca DI SINI, bukan dikirim panel: id
+  // tab dari panel bisa sudah basi saat pesannya mendarat (user pindah tab
+  // sambil dropdown terbuka). startFromTab melapor errornya sendiri lewat
+  // recError, termasuk kalau izin per-tab tabCapture tidak ada.
+  if (msg.type === 'start-active-tab-recording') {
+    chrome.tabs.query({ active: true, lastFocusedWindow: true }).then(([tab]) => {
+      if (!tab) return recError('Tab aktif tidak terbaca.');
+      return startFromTab(tab, !!msg.video);
+    }).catch((e) => recError(e.message));
     return false;
   }
   if (msg.type === 'regenerate-transcript') {

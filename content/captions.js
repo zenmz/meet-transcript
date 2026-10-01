@@ -4,10 +4,17 @@
   const SESS = globalThis.MeetSession;
 
   let sourceMode = 'caption';
-  chrome.storage.local.get('settings').then((d) => { sourceMode = d.settings?.transcriptSource ?? 'caption'; });
+  // Snapshot get() bisa lebih tua dari onChanged yang mendarat selagi get
+  // berjalan — kalau sudah ada perubahan, snapshot itu basi, abaikan.
+  let sourceChanged = false;
   chrome.storage.onChanged.addListener((c, area) => {
-    if (area === 'local' && c.settings) sourceMode = c.settings.newValue?.transcriptSource ?? 'caption';
+    if (area !== 'local' || !c.settings) return;
+    sourceChanged = true;
+    sourceMode = c.settings.newValue?.transcriptSource ?? 'caption';
   });
+  chrome.storage.local.get('settings').then((d) => {
+    if (!sourceChanged) sourceMode = d.settings?.transcriptSource ?? 'caption';
+  }).catch(() => {});
 
   let port = null;
   let statusTimer = null;

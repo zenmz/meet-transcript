@@ -22,7 +22,7 @@ case "${1:-}" in
 esac
 
 # File yang browser butuh. Tambah di sini kalau ada folder runtime baru.
-ITEMS=(manifest.json README.md LICENSE background panel content offscreen lib icons)
+ITEMS=(manifest.json README.md LICENSE background panel popup content offscreen lib icons)
 
 # Gagal cepat kalau ada item yang hilang (salah ketik / folder pindah).
 for it in "${ITEMS[@]}" manifest.firefox.json; do

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Meet Transcript",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Transkrip Google Meet dari caption, lalu jadi Minutes of Meeting. Versi Firefox: caption-only (tanpa rekam audio).",
   "browser_specific_settings": {
     "gecko": {
@@ -24,12 +24,9 @@
   "content_scripts": [
     {
       "matches": ["https://meet.google.com/*"],
-      "js": ["content/selectors.js", "content/session.js", "content/captions.js", "content/captionhide.js"],
+      "js": ["content/selectors.js", "content/session.js", "content/captions.js", "content/captionhide.js", "content/captionlang.js"],
       "run_at": "document_idle"
     }
-  ],
-  "web_accessible_resources": [
-    { "resources": ["icons/icon48.png"], "matches": ["https://meet.google.com/*"] }
   ],
   "sidebar_action": {
     "default_panel": "panel/panel.html",
