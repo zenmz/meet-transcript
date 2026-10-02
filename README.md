@@ -10,7 +10,7 @@
 
 **Meet Transcript** adalah ekstensi Google Chrome yang terintegrasi langsung pada *side panel* Google Meet. Ekstensi ini menangkap transkrip caption secara *real-time* selama rapat berlangsung dan secara otomatis merangkumnya menjadi *Minutes of Meeting* (MoM). Transkrip dari rekaman audio muncul setelah perekaman dihentikan.
 
-Selain Google Meet, **panggilan suara Discord di peramban** (`discord.com/channels/…`) juga dapat direkam dan ditranskripsi lewat jalur audio + STT. Discord tidak punya *live caption*, jadi di sana hanya mode rekam audio yang berlaku — tanpa nama pembicara, dan perekaman dihentikan manual.
+Selain Google Meet, **panggilan suara Discord di peramban** (`discord.com/channels/…`) dan **meeting Zoom di web client** (`zoom.us/wc/…`) juga dapat direkam dan ditranskripsi lewat jalur audio + STT. Keduanya tidak punya *live caption*, jadi di sana hanya mode rekam audio yang berlaku — tanpa nama pembicara, dan perekaman dihentikan manual.
 
 Seluruh data rapat disimpan secara lokal di peramban (*browser*) Anda. Tanpa server perantara, dan Anda memiliki kendali penuh atas *endpoint* STT (Speech-to-Text) maupun LLM (Large Language Model) yang digunakan — termasuk *server* Whisper di jaringan Anda sendiri. Baca bagian [Keamanan & Privasi](#-keamanan--privasi) untuk mengetahui persis data apa yang keluar pada tiap mode.
 
@@ -31,6 +31,7 @@ Seluruh data rapat disimpan secara lokal di peramban (*browser*) Anda. Tanpa ser
 * **Caption Tersembunyi (Bawaan):** Tampilan caption di layar Meet disembunyikan tanpa mematikan CC — tile video tetap penuh, transkrip tetap terisi di panel. Ingin melihat caption lagi? Matikan **Sembunyikan caption di layar Meet** di Settings.
 * **Bahasa Caption dari Popup:** Pemilih bahasa milik Meet berada di dalam area caption, jadi ikut tersembunyi oleh butir di atas. Pilihan **Indonesia** (bawaan) / **English** di popup menerapkannya langsung ke Meet, sekali tiap panggilan — pergantian manual di UI Meet tetap dihormati.
 * **Rekam Discord Web:** Panggilan suara di `discord.com/channels/…` ikut bisa direkam (audio, atau audio + video tab). Hanya versi web — aplikasi desktop Discord di luar jangkauan ekstensi.
+* **Rekam Zoom Web:** Meeting di web client Zoom (`zoom.us/wc/<id>/join`, `/start`, atau bentuk lama `/wc/join/<id>`) ikut bisa direkam — termasuk `app.zoom.us` dan subdomain *vanity* perusahaan. Mulai rekam dari **popup ikon** atau pintasan `Alt+Shift+R` / `Alt+Shift+V`; menu klik kanan tidak didaftarkan untuk Zoom. Link `zoom.us/j/<id>` bukan halaman web client — ia meluncurkan aplikasi desktop, yang audionya tidak ada di tab. Zoom for Government (`zoomgov.com`) di luar cakupan.
 
 ---
 
@@ -91,7 +92,7 @@ Anda dapat merekam audio *tab* untuk ditranskripsi via STT, baik secara mandiri 
 
 1. Buka menu **Settings** → set **Sumber transkrip** = *Rekam audio* agar blok **Mode STT** terlihat → konfigurasikan **Mode STT**. (Setelah dikonfigurasi, perekaman tetap bisa dipakai sambil *Sumber transkrip* dikembalikan ke *Caption Meet* — mode STT yang tersimpan tetap dipakai.)
 2. Di dalam panggilan, mulai rekam lewat salah satu dari tiga jalur: **popup ikon ekstensi** → *Rekam*, **klik kanan** di halaman, atau pintasan keyboard. Pilihan *Audio + video* ikut merekam tampilan *tab* (720p VP9, ±250 MB/jam, diunduh sebagai satu fail `.webm` lewat tombol **Unduh video** di Riwayat).
-3. Di Google Meet, perekaman berhenti otomatis saat Anda keluar panggilan. **Di Discord tidak** — tidak ada pelacak sesi di sana, jadi hentikan sendiri lewat popup, panel, atau klik kanan → **Stop rekam**.
+3. Di Google Meet, perekaman berhenti otomatis saat Anda keluar panggilan. **Di Discord dan Zoom tidak** — tidak ada pelacak sesi di sana, jadi hentikan sendiri lewat popup, panel, pintasan `Alt+Shift+S`, atau klik kanan → **Stop rekam**.
 
 **Catatan Penting:**
 

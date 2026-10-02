@@ -137,12 +137,25 @@ const MEET_RE = /^[a-z]{3}-[a-z]{4}-[a-z]{3}$/;
 // "@me" (DM) dipetakan ke "dm" — id ikut jadi bagian nama file unduhan, dan "@"
 // di nama file ditangani beda-beda tiap OS.
 const DISCORD_RE = /^\/channels\/(@me|\d+)\/(\d+)/;
+// Zoom web client: /wc/<id>/join|start (bentuk sekarang) dan /wc/join/<id>
+// (bentuk lama) — Zoom masih melayani keduanya. Angka meeting id satu-satunya
+// bagian URL yang stabil: querystring memuat nama tampilan & token sekali pakai.
+// /j/<id> SENGAJA tidak dikenali — itu link peluncur aplikasi desktop, bukan
+// halaman yang audionya ada di tab.
+const ZOOM_RE = /^\/wc\/(?:join\/)?(\d+)(?:\/(?:join|start))?/;
 function meetingIdFromUrl(url) {
   try {
     const { hostname, pathname } = new URL(url);
     if (hostname === 'discord.com') {
       const m = pathname.match(DISCORD_RE);
       return m ? `discord-${m[1] === '@me' ? 'dm' : m[1]}-${m[2]}` : null;
+    }
+    // Mencakup zoom.us, app.zoom.us, dan subdomain vanity perusahaan sekaligus.
+    // endsWith('.zoom.us'), bukan includes(): 'notzoom.us.evil.com' lolos
+    // includes() dan ikut dianggap Zoom.
+    if (hostname === 'zoom.us' || hostname.endsWith('.zoom.us')) {
+      const m = pathname.match(ZOOM_RE);
+      return m ? `zoom-${m[1]}` : null;
     }
     const p = pathname.slice(1);
     return MEET_RE.test(p) ? p : null;
@@ -170,7 +183,11 @@ async function startFromTab(tab, video) {
   // kena akibatnya — source dibalik jadi audio dan endedAt dihapus.
   const meetingId = meetingIdFromUrl(tab?.url);
   if (!meetingId) {
-    recError('Buka halaman ruang Meet / channel Discord-nya dulu — rekaman mengambil audio tab ini. URL tab: ' + (tab?.url ?? '(tidak terbaca)'));
+    // URL tab ikut disebut: inilah satu-satunya petunjuk kenapa tombol Rekam
+    // menolak, dan bentuk URL-lah yang membedakan halaman ruang dari halaman
+    // lain di host yang sama (zoom.us/wc/... vs zoom.us/j/...).
+    recError('Buka halaman ruang Meet / channel Discord / Zoom web (zoom.us/wc/...)-nya dulu'
+      + ' — rekaman mengambil audio tab ini. URL tab: ' + (tab?.url ?? '(tidak terbaca)'));
     return;
   }
   try {

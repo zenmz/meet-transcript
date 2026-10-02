@@ -1,9 +1,9 @@
 // Kabel pesan service worker: pemulihan state rekaman saat SW bangun lagi
-// (recRestored) dan penerusan "nyalakan mikrofon" ke dokumen offscreen.
-// Diuji lewat SW yang SUNGGUHAN dimuat di atas stub `chrome`, bukan tiruan
-// logikanya: yang rusak di dua fitur ini justru kabelnya — get-active yang
-// membalas sebelum pemulihan selesai, dan pesan yang nyasar ke dokumen yang
-// tidak ada.
+// (recRestored), penerusan "nyalakan mikrofon" ke dokumen offscreen, dan
+// pengenalan URL ruang meeting. Diuji lewat SW yang SUNGGUHAN dimuat di atas
+// stub `chrome`, bukan tiruan logikanya: yang rusak di fitur-fitur ini justru
+// kabelnya — get-active yang membalas sebelum pemulihan selesai, dan pesan yang
+// nyasar ke dokumen yang tidak ada.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -54,8 +54,16 @@ function loadSw({ offscreen, recordings = [] }) {
     for (const f of handlers) if (f(msg, {}, resolve) === true) return;
     resolve(undefined);
   });
-  return { ask, sent, badge: () => badge };
+  // meetingIdFromUrl ikut dibuka: deklarasi `function` di top-level sebuah
+  // classic script menempel ke global konteks vm, beda dari `const` yang
+  // tinggal di scope deklaratif script-nya.
+  return { ask, sent, badge: () => badge, meetingIdFromUrl: ctx.meetingIdFromUrl };
 }
+
+// GERBANG TUNGGAL seluruh fitur rekam: URL yang tak dikenalinya ditolak
+// startFromTab, jadi pola yang salah membuat tombol Rekam tak pernah aktif
+// tanpa petunjuk apa pun — kegagalan paling senyap yang bisa dimiliki fitur ini.
+const idOf = loadSw({ offscreen: null }).meetingIdFromUrl;
 
 // Handler yang tidak membalas mengerjakan sisanya di promise lepas — satu
 // macrotask cukup untuk menguras microtask-nya.
@@ -147,4 +155,40 @@ test('recId sah diteruskan ke offscreen bersama recId-nya', async () => {
   const sent = sw.sent.find((m) => m.op === 'retranscribe');
   assert.equal(sent.recId, 1000);
   assert.equal(sent.meetingId, 'abc-defg-hij');
+});
+
+test('Zoom web: tiga bentuk URL /wc/ yang dilayani Zoom', () => {
+  // Bentuk sekarang, join dan start.
+  assert.equal(idOf('https://zoom.us/wc/8412345678/join'), 'zoom-8412345678');
+  assert.equal(idOf('https://zoom.us/wc/8412345678/start'), 'zoom-8412345678');
+  // Bentuk lama, masih dilayani.
+  assert.equal(idOf('https://zoom.us/wc/join/8412345678'), 'zoom-8412345678');
+  // Querystring memuat nama tampilan & token sekali pakai — bukan bagian id.
+  assert.equal(idOf('https://zoom.us/wc/8412345678/join?prefer=1&un=cmlvbg=='),
+    'zoom-8412345678');
+});
+
+test('Zoom web: app.zoom.us dan subdomain vanity ikut dikenali', () => {
+  assert.equal(idOf('https://app.zoom.us/wc/8412345678/start'), 'zoom-8412345678');
+  assert.equal(idOf('https://dlabs.zoom.us/wc/join/8412345678'), 'zoom-8412345678');
+});
+
+test('Zoom: halaman non-meeting dan host lain ditolak', () => {
+  // Tanpa /wc/ bukan web client — tombol Rekam tak boleh aktif di halaman harga.
+  assert.equal(idOf('https://zoom.us/pricing'), null);
+  assert.equal(idOf('https://zoom.us/j/8412345678'), null); // link launcher app
+  assert.equal(idOf('https://zoom.us/wc/join/'), null);     // tanpa angka
+  // Zoom for Government: host berbeda, sengaja di luar cakupan.
+  assert.equal(idOf('https://zoomgov.com/wc/8412345678/join'), null);
+  // Jangan tertipu domain yang sekadar BERAKHIRAN mirip.
+  assert.equal(idOf('https://notzoom.us.evil.com/wc/8412345678/join'), null);
+});
+
+test('Meet & Discord tetap dikenali setelah cabang Zoom disisipkan', () => {
+  // Proteksi regresi: cabang Zoom masuk di tengah fungsi yang sama.
+  assert.equal(idOf('https://meet.google.com/abc-defg-hij'), 'abc-defg-hij');
+  assert.equal(idOf('https://discord.com/channels/123/456'), 'discord-123-456');
+  assert.equal(idOf('https://discord.com/channels/@me/456'), 'discord-dm-456');
+  assert.equal(idOf('https://meet.google.com/landing'), null);
+  assert.equal(idOf(undefined), null);
 });
