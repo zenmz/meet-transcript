@@ -83,7 +83,9 @@ test('import sehat: chunk & vchunk mendarat di key IndexedDB yang benar', async 
   const r = await importBackup(zip);
   assert.equal(calls.cleared, 1);
   assert.deepEqual(calls.set, { meetings: ['abc'] });
-  assert.deepEqual(calls.imported.chunks.map((c) => c.key), ['chunk:7', 'vchunk:0']);
+  // recId = baseTime, dan audioMeta di ZIP ≤0.3 bisa tak punya baseTime → 0.
+  // Bukan NaN: key 'chunk:NaN:7' tak akan pernah ditemukan lagi oleh siapa pun.
+  assert.deepEqual(calls.imported.chunks.map((c) => c.key), ['chunk:0:7', 'vchunk:0:0']);
   assert.deepEqual(r, { meetings: 1, chunks: 2, audioError: null });
 });
 
@@ -111,4 +113,41 @@ test('restore rekaman gagal → hasil parsial, bukan throw', async () => {
   assert.equal(r.audioError, 'kuota habis');
   assert.equal(r.meetings, 1);
   assert.equal(r.chunks, 0);
+});
+
+const { exportBackup } = globalThis.MeetBackup;
+
+test('export tidak memuat entri audio maupun field audioMeta', async () => {
+  // Backup untuk teks. Audio & video bisa ratusan MB per rekaman, dan
+  // audioMeta yang ikut TANPA chunk-nya membuat panel menawarkan
+  // "Unduh audio (3 file)" yang selalu gagal — jatuh berdua atau tidak sama
+  // sekali.
+  globalThis.chrome = { storage: { local: {
+    get: async () => ({ meetings: ['abc-defg-hij'], 'meeting:abc-defg-hij': { segments: [] } }),
+  } } };
+  let touched = false;
+  globalThis.MeetAudioStore = {
+    listRecordings: async () => { touched = true; return []; },
+    loadAudio: async () => { touched = true; return null; },
+    loadVideo: async () => { touched = true; return null; },
+  };
+  const entries = await readZip(await exportBackup());
+  assert.deepEqual(entries.map((e) => e.name), ['backup.json']);
+  const j = JSON.parse(await entries[0].blob.text());
+  assert.equal(j.version, 1); // format tidak dinaikkan: audioMeta sudah opsional
+  assert.ok(!('audioMeta' in j));
+  assert.equal(touched, false); // store rekaman tidak dibaca sama sekali
+});
+
+test('import ZIP lama ber-audio mendarat di key chunk:<recId>:<i>', async () => {
+  const calls = stubEnv();
+  await importBackup(await zipOf(
+    { version: 1, storage: { meetings: [] },
+      audioMeta: { meetingId: 'abc-defg-hij', baseTime: 1700, count: 2, videoCount: 1 } },
+    [{ name: 'audio/chunk-0.webm', data: new Blob(['a']) },
+      { name: 'audio/chunk-2.webm', data: new Blob(['b']) },
+      { name: 'audio/video-0.webm', data: new Blob(['v']) }]));
+  assert.deepEqual(calls.imported.chunks.map((c) => c.key),
+    ['chunk:1700:0', 'chunk:1700:2', 'vchunk:1700:0']);
+  assert.equal(calls.imported.meta.baseTime, 1700);
 });
