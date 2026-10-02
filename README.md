@@ -16,10 +16,10 @@ Seluruh data rapat disimpan secara lokal di peramban (*browser*) Anda. Tanpa ser
 
 ## ✨ Fitur Utama
 
-* **Popup Aksi Cepat:** Klik ikon ekstensi membuka popup ringkas — **Rekam** (audio / audio + video), **Bahasa caption** (Indonesia / English), **Tampilkan detail** (membuka side panel), dan **Riwayat meet** yang membuka rapat pilihan langsung di halaman detailnya.
+* **Popup Aksi Cepat:** Klik ikon ekstensi membuka popup ringkas — **Rekam** (audio / audio + video), **Mikrofon** (centang on/off), **Bahasa caption** (Indonesia / English), **Tampilkan detail** (membuka side panel), dan **Riwayat meet** yang membuka rapat pilihan langsung di halaman detailnya.
 * **Multi-Sumber Transkripsi:** Menggabungkan *caption* bawaan Google Meet (menyertakan nama pembicara) dan rekaman audio *tab* (via STT) dalam satu linimasa rapat, diurutkan menurut waktu.
 * **Rekam Video (Opsional):** Rekam isi *tab* Meet sebagai satu fail `.webm` (720p, VP9, ±250 MB/jam) lewat menu klik kanan **Rekam audio + video meeting** — transkrip audio tetap berjalan seperti biasa.
-* **Rekam Mikrofon (Opsional):** Bawaan hanya suara peserta lain (audio *tab*) yang terekam. Centang **Rekam mikrofon** di Settings agar suara Anda ikut dicampur ke rekaman audio dan video; izin mikrofon diminta sekali lewat jendela kecil.
+* **Rekam Mikrofon (Opsional):** Bawaan hanya suara peserta lain (audio *tab*) yang terekam. Nyalakan **Mikrofon** dari popup ikon — atau centang **Rekam mikrofon** di Settings, keduanya kunci yang sama — agar suara Anda ikut dicampur ke rekaman audio dan video; izin mikrofon diminta sekali lewat jendela kecil. Dapat dinyalakan **di tengah rekaman**: mic langsung bergabung tanpa memutus rekaman yang sedang jalan (bagian sebelum itu tetap tanpa mic). Mematikannya di tengah rekaman tidak bisa — hentikan rekamannya dulu.
 * **Endpoint STT Milik Anda:** Arahkan ke *server* Whisper pribadi (whisper.cpp, faster-whisper) di jaringan sendiri, atau ke *endpoint* STT API mana pun yang OpenAI-compatible.
 * **Pembuatan MoM Otomatis:** Menghasilkan *context*, *discussion*, peserta, dan *action items* menggunakan *endpoint* LLM yang kompatibel dengan OpenAI (misal: `gpt-4o-mini`). *Template* dapat dikustomisasi.
 * **Fleksibilitas Tanpa API Key:** Anda dapat menyalin *prompt* beserta transkrip ke *clipboard*, atau mengirimkannya secara otomatis ke Google Gemini atau ChatGPT di *tab* baru tanpa memerlukan integrasi API.
@@ -134,6 +134,7 @@ Ekstensi ini dirancang dengan pendekatan *privacy-first*:
 * **Caption tetap tampil setelah ekstensi di-*reload*:** *Content script* di *tab* yang sudah terbuka menjadi yatim saat ekstensi dimuat ulang, dan ia sengaja melepas sendiri gaya penyembunyi caption (kalau tidak, caption terkunci tersembunyi dan tak terjangkau Settings). Muat ulang *tab* Meet-nya.
 * **Bahasa caption tidak berganti:** Ekstensi mencoba maksimal 3 kali per panggilan lalu berhenti. Kalau Google mengubah struktur pemilih bahasa, perbaiki `langCombobox()`/`langOption()` di `content/selectors.js`.
 * **Peringatan "Belum ada suara masuk":** Tanpa opsi **Rekam mikrofon**, sistem hanya menangkap suara peserta lain. Jika tidak ada orang lain yang berbicara, maka tidak ada audio yang diproses.
+* **Tombol Stop hilang / rekaman tampak berhenti sendiri:** sudah diperbaiki. *Service worker* MV3 mati setelah ±30 detik menganggur, dan status rekaman dulu hanya hidup di memorinya — di Discord dan Zoom tidak ada *content script* yang menjaganya hidup, jadi UI kembali ke keadaan "tidak merekam" sementara rekamannya jalan terus. Status sekarang ditanyakan ke dokumen *offscreen* tiap *service worker* bangun. Kalau tombolnya tetap tak muncul, `Alt+Shift+S` selalu bekerja.
 * **Log Eror:** Jika terjadi kesalahan pada *side panel*, pesan *error* dan *stack trace* dapat disorot dan disalin langsung dari antarmuka panel.
 
 ---
