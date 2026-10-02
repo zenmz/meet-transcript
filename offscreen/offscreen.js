@@ -378,6 +378,24 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     sendResponse({ ok: true });
     retranscribe(msg).catch((e) =>
       toSW({ type: 'audio-error', meetingId: msg.meetingId, error: e.message }));
+  } else if (msg.op === 'state') {
+    // Dokumen ini satu-satunya yang TAHU apakah ada rekaman jalan: `rec` di SW
+    // cuma hidup di memori, dan SW MV3 mati tiap ~30 detik menganggur. Jawaban
+    // di sini tidak bisa berbohong seperti state tersimpan — kalau dokumennya
+    // mati, pesan ini tak terjawab sama sekali.
+    sendResponse({ ok: true, recording: !!recorder, transcribing: busy,
+      meetingId: cfg?.meetingId ?? null });
+    return false;
+  } else if (msg.op === 'mic-enable') {
+    // Mic dinyalakan SENGAJA dari popup di tengah rekaman. Beda dari
+    // 'mic-join' di bawah, yang digate cfg.mic supaya tombol "Izinkan
+    // mikrofon" di Settings tidak menyelundupkan mic ke rekaman tab-only —
+    // di sini gate itulah yang diminta terbuka, jadi cfg.mic dibalik dulu.
+    // Recorder yang sedang jalan tak disentuh: semuanya membaca campuran dari
+    // mixNode, dan joinMic hanya menyambung satu node baru ke situ.
+    sendResponse({ ok: true });
+    if (cfg) cfg.mic = true;
+    joinMic();
   } else if (msg.op === 'mic-join') {
     // Izin mic baru diberikan lewat jendela izin SW di tengah rekaman. Digate
     // cfg.mic: tombol "Izinkan mikrofon" di Settings bisa diklik saat rekaman

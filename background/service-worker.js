@@ -99,6 +99,33 @@ async function ensureOffscreen() {
   });
 }
 
+// `rec` cuma hidup di memori, dan service worker MV3 mati ~30 detik setelah
+// pesan terakhir. Di Meet itu praktis tak pernah terjadi: content script
+// melapor status tiap 2 detik. Rekaman Discord TIDAK punya content script dan
+// offscreen diam di antara chunk (10 menit), jadi SW mati beberapa detik
+// setelah rekam mulai — dan tiap SW bangun lagi `rec` kosong: badge padam,
+// popup menawarkan "Rekam" bukan "Stop rekam", panel bilang belum merekam.
+// Rekamannya sendiri jalan terus di offscreen; yang berhenti hanya tampilan,
+// dan pernah terlihat sebagai rekaman Discord 2,5 jam (121 MB) yang menurut UI
+// "berhenti sendiri" setelah beberapa menit.
+// Dokumen offscreen yang ditanya, bukan state tersimpan: storage bisa bilang
+// "masih merekam" untuk dokumen yang sudah mati (crash / reload ekstensi), dan
+// rec yang macet begitu memblokir start, stop, dan transkrip ulang selamanya.
+// Dijalankan sekali per SW start; pemakainya meng-await promise ini.
+const recRestored = (async () => {
+  if (!(await hasOffscreen())) return;
+  const res = await chrome.runtime.sendMessage({ target: 'offscreen', op: 'state' })
+    .catch(() => null);
+  if (!res?.ok || (!res.recording && !res.transcribing)) return;
+  // Pesan yang MEMBANGUNKAN SW bisa keburu mengubah rec sendiri (start/stop
+  // dari popup) sebelum balasan di atas datang — state yang sudah bergerak
+  // lebih baru daripada yang dipulihkan.
+  if (rec.recording || rec.transcribing) return;
+  rec = { recording: res.recording, transcribing: res.transcribing, meetingId: res.meetingId };
+  updateBadge();
+  broadcastRec();
+})().catch((e) => console.warn('[rec] pulih state gagal', e.message));
+
 // Start rekam dipicu dari context menu halaman Meet: klik context menu memberi
 // invocation activeTab yang dibutuhkan tabCapture.getMediaStreamId — tombol
 // side panel atau tombol yang disuntik ke halaman tidak (batasan Chrome:
@@ -736,8 +763,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'get-active') {
     const panel = pendingPanel;
     pendingPanel = null;
-    sendResponse({ ...active, rec, panelTab: panel?.tab ?? null, panelMeetingId: panel?.id ?? null });
-    return false;
+    // Di-await: get-active adalah pesan PERTAMA yang dikirim popup dan panel,
+    // dan pesan itu sendiri yang membangunkan SW. Tanpa menunggu, keduanya
+    // dirender dari rec kosong — layar "tidak merekam" di atas rekaman yang
+    // masih jalan (lihat recRestored).
+    recRestored.then(() => sendResponse({
+      ...active, rec, panelTab: panel?.tab ?? null, panelMeetingId: panel?.id ?? null }));
+    return true; // sendResponse async
   }
   if (msg.type === 'generate-mom') {
     generateMomOnce(msg.id).then(
@@ -827,6 +859,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'open-mic-permission') { // tombol "Izinkan mikrofon" di Settings
     askMicPermission();
+    return false;
+  }
+  if (msg.type === 'enable-mic') {
+    // Toggle mikrofon di popup dinyalakan. settings.mic sudah ditulis popup —
+    // yang perlu diteruskan hanya kalau ada rekaman JALAN yang mic-nya harus
+    // ikut sekarang; rekaman berikutnya membacanya sendiri lewat sttConfig().
+    // Digate hasOffscreen, bukan rec.recording: rec bisa baru dipulihkan (atau
+    // belum) saat pesan ini mendarat, sedangkan dokumen offscreen adalah
+    // kenyataannya — dan pesan ke dokumen yang tak ada cuma jadi rejection.
+    hasOffscreen().then((on) => {
+      if (on) chrome.runtime.sendMessage({ target: 'offscreen', op: 'mic-enable' }).catch(() => {});
+    });
     return false;
   }
   if (msg.type === 'mic-denied') {

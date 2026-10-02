@@ -30,6 +30,9 @@ function icon(paths, cls) {
 // kosong (instalasi baru) dibaca sebagai 'id'.
 const BAHASA = [['id', 'Indonesia'], ['en', 'English']];
 let captionLang = 'id';
+// settings.mic — dicampur ke rekaman tab, bukan ke speaker. Dicerminkan di
+// sini supaya centangnya benar sejak render pertama.
+let micOn = false;
 
 const ICON = {
   // Titik rekam — satu-satunya ikon berisi warna, sewarna badge merekam.
@@ -37,6 +40,11 @@ const ICON = {
   stop: () => icon(['M7.5 7.5h9v9h-9z'], 'solid'),
   detail: () => icon(['M4 5h16v14H4z', 'M14 5v14']),
   riwayat: () => icon(['M3.5 12a8.5 8.5 0 1 0 17 0 8.5 8.5 0 1 0-17 0', 'M12 7.5V12l3 2']),
+  mic: () => icon([
+    'M12 4a2.5 2.5 0 0 1 2.5 2.5v4.5a2.5 2.5 0 0 1-5 0V6.5A2.5 2.5 0 0 1 12 4z',
+    'M6.5 11a5.5 5.5 0 0 0 11 0',
+    'M12 16.5V20',
+  ]),
   bahasa: () => icon([
     'M3.5 12a8.5 8.5 0 1 0 17 0 8.5 8.5 0 1 0-17 0',
     'M3.5 12h17',
@@ -52,6 +60,18 @@ async function setCaptionLang(code) {
   render(); // centang pindah sekarang, tak menunggu storage
   const cur = (await chrome.storage.local.get('settings')).settings ?? {};
   await chrome.storage.local.set({ settings: { ...cur, captionLang: code } });
+}
+
+// Digabung ke settings tersimpan, alasannya sama dengan setCaptionLang.
+async function setMic(on) {
+  micOn = on;
+  render(); // centang pindah sekarang, tak menunggu storage
+  const cur = (await chrome.storage.local.get('settings')).settings ?? {};
+  await chrome.storage.local.set({ settings: { ...cur, mic: on } });
+  // Rekaman yang sedang jalan ikut kena: semua recorder di offscreen membaca
+  // campuran dari mixNode, jadi mic bisa bergabung tanpa menyentuh recorder.
+  // SW yang meneruskan — ia yang tahu ada dokumen offscreen atau tidak.
+  if (on) chrome.runtime.sendMessage({ type: 'enable-mic' }).catch(() => {});
 }
 
 // Panel dibuka dari gesture klik ini. Tujuannya dititipkan ke service worker
@@ -110,6 +130,22 @@ function render() {
     d.item('Audio saja', () => start(false));
     d.item('Audio + video', () => start(true));
   }
+  // Baris sendiri, BUKAN item di dalam dropdown "Rekam": dua item di situ
+  // adalah aksi yang memulai rekaman (salah klik = rekaman jalan), dan saat
+  // merekam dropdown itu tidak dirender sama sekali — padahal justru di situ
+  // toggle ini harus terjangkau. Centang di label, seperti Bahasa caption.
+  row(micOn ? 'Mikrofon  ✓' : 'Mikrofon', ICON.mic(), () => {
+    // Mematikan di tengah rekaman tidak mungkin: cfg.mic di offscreen adalah
+    // snapshot saat start, dan tak ada jalur melepas mic dari campuran. Ditolak
+    // dengan alasan — kalau dibiarkan, centangnya padam sementara mic-nya
+    // terus terekam.
+    if (micOn && rec.recording) {
+      rec = { ...rec, error: 'Mikrofon tak bisa dimatikan di tengah rekaman — stop rekam dulu.' };
+      render();
+      return;
+    }
+    setMic(!micOn);
+  });
   const l = mkDropdown(view, 'bahasa', 'Bahasa caption', { cls: 'inline', caret: '' });
   l.head.prepend(ICON.bahasa());
   for (const [code, label] of BAHASA) {
@@ -158,6 +194,7 @@ chrome.tabs.query({ active: true, currentWindow: true })
   .catch(() => {});
 chrome.storage.local.get('settings').then((d) => {
   captionLang = d.settings?.captionLang ?? 'id';
+  micOn = !!d.settings?.mic;
   render();
 }).catch(() => {});
 chrome.runtime.sendMessage({ type: 'get-active' }).then((d) => {
