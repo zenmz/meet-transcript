@@ -290,7 +290,11 @@ akan muncul.
 - `recId` milik meeting lain ditolak;
 - keduanya tanpa pesan ke offscreen dan tanpa `rec.transcribing` tersangkut.
 
-Seluruh 96 tes yang ada sekarang harus tetap hijau.
+Seluruh 96 tes yang ada sekarang harus tetap hijau, dengan satu pengecualian
+yang disengaja: assertion key di `import sehat: chunk & vchunk mendarat di key
+IndexedDB yang benar` berubah dari `['chunk:7', 'vchunk:0']` ke
+`['chunk:0:7', 'vchunk:0:0']` — `audioMeta` di tes itu tidak punya `baseTime`,
+jadi `recId`-nya 0.
 
 ## Verifikasi manual
 
