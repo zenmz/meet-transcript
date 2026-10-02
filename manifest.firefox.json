@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Meet Transcript",
-  "version": "0.6.1",
-  "description": "Transkrip Google Meet dari caption, lalu jadi Minutes of Meeting. Versi Firefox: caption-only (tanpa rekam audio).",
+  "version": "0.7.0",
+  "description": "Transkrip Google Meet & rekam panggilan Discord/Zoom web dari caption/audio (STT API atau server lokal), jadi Minutes of Meeting.",
   "browser_specific_settings": {
     "gecko": {
       "id": "meet-transcript@zenmz",
