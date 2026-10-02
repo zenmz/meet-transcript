@@ -130,22 +130,23 @@ function download(name, data) {
 // jadi tidak digabung: menyambung dua webm menghasilkan file berheader ganda
 // yang di kebanyakan player cuma terbaca potongan pertamanya. Diunduh terpisah
 // dan dinomori supaya urutannya jelas.
-async function downloadAudio(meeting) {
-  const saved = await globalThis.MeetAudioStore.loadAudio();
+// Satu meeting bisa punya beberapa rekaman, dan nama file harus membedakannya
+// — tanpa `suffix`, rekaman kedua turun sebagai "Judul (1).webm" dari Chrome
+// dan tak ada tanda rekaman mana itu.
+async function downloadAudio(meeting, rec, suffix) {
+  const saved = await globalThis.MeetAudioStore.loadAudio(rec.recId);
   if (!saved?.blobs?.length) return 0;
   // Kepemilikan dicek ULANG di sini, bukan cuma lewat gate tombolnya: gate itu
-  // membaca audioMeta yang di-cache, dan view meeting di tab Riwayat tidak
-  // dirender ulang saat rekaman BARU mengganti isi store. Tanpa cek ini, buka
-  // meeting lama A → rekam ruang B → klik "Unduh audio" di A menghasilkan blob
-  // milik B, tersimpan dengan nama A.
+  // membaca daftar rekaman yang di-cache, dan view meeting di tab Riwayat tidak
+  // dirender ulang saat arsip recurring me-retag meetingId sebuah rekaman.
   if (saved.meetingId !== meeting.id) return 0;
   // Dinomori dengan indeks ASLI potongan, bukan posisi di array: kalau ada
   // potongan yang gagal tersimpan, penomoran berurutan membuat file-file itu
   // tidak lagi cocok dengan slot 10 menit di transkrip.
   saved.blobs.forEach((blob, i) => download(
     saved.blobs.length > 1
-      ? `${meeting.title}-${String((saved.indices?.[i] ?? i) + 1).padStart(2, '0')}.webm`
-      : `${meeting.title}.webm`,
+      ? `${meeting.title}${suffix}-${String((saved.indices?.[i] ?? i) + 1).padStart(2, '0')}.webm`
+      : `${meeting.title}${suffix}.webm`,
     blob));
   return saved.blobs.length;
 }
@@ -153,12 +154,11 @@ async function downloadAudio(meeting) {
 // Kebalikan audio: part video BUKAN file berdiri sendiri — gabungan berurutan
 // seluruh part = satu file webm valid, jadi diunduh sebagai SATU file.
 // "-video" di nama: hindari tabrakan dengan unduhan audio satu-file.
-async function downloadVideo(meeting) {
-  const saved = await globalThis.MeetAudioStore.loadVideo();
+async function downloadVideo(meeting, rec, suffix) {
+  const saved = await globalThis.MeetAudioStore.loadVideo(rec.recId);
   if (!saved?.blobs?.length) return false;
-  // Cek kepemilikan ulang — alasan sama dengan downloadAudio di atas.
-  if (saved.meetingId !== meeting.id) return false;
-  download(`${meeting.title}-video.webm`, new Blob(saved.blobs, { type: 'video/webm' }));
+  if (saved.meetingId !== meeting.id) return false; // alasan sama dengan downloadAudio
+  download(`${meeting.title}${suffix}-video.webm`, new Blob(saved.blobs, { type: 'video/webm' }));
   return true;
 }
 
@@ -166,7 +166,7 @@ async function downloadVideo(meeting) {
 // pass yang kalah cepat tidak boleh menimpa DOM pass yang lebih baru.
 let renderEpoch = 0;
 let lastRenderedKey = null; // view terakhir yang digambar renderMeeting (id|live)
-let audioMeta = null;       // hasil audio-meta terakhir
+let audioMeta = null;       // daftar rekaman (listRecordings) terakhir, atau null
 let audioMetaKey = null;    // view key yang menghasilkannya (null = wajib tanya lagi)
 const momErrors = new Map(); // meetingId → pesan error MoM terakhir
 
@@ -180,20 +180,8 @@ async function render() {
 async function renderMeeting(id, live, epoch) {
   const meeting = id ? await getMeeting(id) : null;
   const viewKey = `${id}|${live}`;
-  // Audio meta menentukan tombol "Unduh audio" & "Transkrip ulang" (hanya
-  // rekaman TERAKHIR yang disimpan). Diambil SEBELUM replaceChildren supaya
-  // rerender 2-detikan tidak membuat action bar + daftar segmen berkedip, dan
-  // di-cache per view karena tiap panggilan = satu indexedDB.open.
-  // undefined = pembacaan GAGAL (jangan di-cache, tombolnya harus bisa muncul
-  // di render berikutnya), null = memang tak ada audio (aman di-cache).
-  let meta = audioMeta;
-  let metaKey = audioMetaKey;
-  if (meeting?.source !== 'audio') { meta = null; metaKey = null; }
-  else if (audioMetaKey !== viewKey) {
-    const res = await globalThis.MeetAudioStore.loadAudioMeta().catch(() => undefined);
-    meta = res ?? null;
-    metaKey = res === undefined ? null : viewKey;
-  }
+let audioMeta = null;       // daftar rekaman (listRecordings) terakhir, atau null
+let audioMetaKey = null;    // view key yang menghasilkannya (null = wajib tanya lagi)
   if (epoch !== renderEpoch) return; // pass lebih baru sudah jalan
   // Cache baru ditulis SETELAH epoch dicek: pass yang kalah balapan tidak boleh
   // menimpa hasil pass yang lebih baru, walau ia sudah terlanjur membacanya.
@@ -267,7 +255,7 @@ async function renderMeeting(id, live, epoch) {
   // satu slot global, tanpa gate ini error rekaman meeting A ikut tercat di
   // meeting caption lama B yang tak punya tombolnya — persis kebingungan yang
   // mau dihilangkan.
-  if (!live && recState.error && audioMeta?.meetingId === meeting.id) {
+  if (!live && recState.error && (audioMeta ?? []).some((r) => r.meetingId === meeting.id)) {
     view.append(el('div', 'err', recState.error));
   }
 
@@ -335,57 +323,24 @@ async function renderMeeting(id, live, epoch) {
   // di tab Riwayat tidak ada bar progres seperti di Live — tanpa baris ini,
   // "Transkrip ulang" yang diklik dari sini membuat seluruh blok tombol LENYAP
   // tanpa kabar apa pun sampai selesai.
-  if (!live && recState.transcribing && audioMeta?.meetingId === meeting.id) {
+  // Daftar rekaman menentukan item "Unduh audio"/"Unduh video" dan "Transkrip
+  // ulang" (5 rekaman terakhir yang disimpan). Diambil SEBELUM replaceChildren
+  // supaya rerender 2-detikan tidak membuat action bar + daftar segmen
+  // berkedip, dan di-cache per view karena tiap panggilan = satu indexedDB.open.
+  // undefined = pembacaan GAGAL (jangan di-cache, tombolnya harus bisa muncul
+  // di render berikutnya), null = memang tak ada rekaman (aman di-cache).
+  let meta = audioMeta;
+  let metaKey = audioMetaKey;
+  if (meeting?.source !== 'audio') { meta = null; metaKey = null; }
+  else if (audioMetaKey !== viewKey) {
+    const res = await globalThis.MeetAudioStore.listRecordings().catch(() => undefined);
+    meta = res ?? null;
+    metaKey = res === undefined ? null : viewKey;
+  }
     actions.append(el('span', 'muted',
       recState.total ? `Mentranskrip… ${recState.done}/${recState.total}` : 'Mentranskrip…'));
   }
-  // Gate audio (count) dan video (videoCount) DIPISAH: part video mendarat
-  // tiap 60 detik, chunk audio baru tiap rotasi 10 menit — rekaman yang mati
-  // di menit 5 punya video tersimpan tapi count audio masih 0, dan gate
-  // gabungan menyembunyikan video yang sebenarnya bisa diselamatkan.
-  if (audioMeta?.meetingId === meeting.id && (audioMeta.count > 0 || audioMeta.videoCount > 0)
-    && !recState.recording && !recState.transcribing) {
-    // count 0 = beginAudio sudah menulis meta tapi belum ada satu potongan pun
-    // (rekaman mati sebelum rotasi pertama). Menawarkan Unduh/Transkrip ulang
-    // di situ hanya berujung "Audio rekaman tidak tersimpan lagi".
-    if (audioMeta.count > 0) {
-      // Chunk disimpan sambil merekam, jadi tombol ini juga jalur penyelamat
-      // kalau rekaman mati di tengah (browser ditutup) atau STT gagal total:
-      // audionya tetap utuh sampai potongan terakhir yang sempat ditulis.
-      dl.item(`Unduh audio${audioMeta.count > 1 ? ` (${audioMeta.count} file)` : ''}`, async () => {
-        const n = await downloadAudio(meeting).catch(() => 0);
-        flash(dl.head, n ? `Diunduh ✓${n > 1 ? ` (${n} file)` : ''}` : 'Audio tidak ditemukan', 3000);
-      });
-      // Chrome memblok unduhan beruntun sampai user mengizinkan sekali — tanpa
-      // keterangan ini, file ke-2 dst tampak hilang begitu saja. Di dalam
-      // menu, di bawah tombol yang dijelaskannya.
-      if (audioMeta.count > 1) dl.list.append(el('span', 'muted',
-        'Beberapa file: izinkan "Download multiple files" kalau Chrome bertanya.'));
-    }
-    if (audioMeta.videoCount > 0) {
-      dl.item('Unduh video', async () => {
-        const ok = await downloadVideo(meeting).catch(() => false);
-        flash(dl.head, ok ? 'Diunduh ✓' : 'Video tidak ditemukan', 3000);
-      });
-    }
-    // Hanya saat Sumber transkrip = Rekam audio (pilihan user 2026-09-09): di
-    // mode caption transkrip datang dari caption, tombol ini cuma membingungkan.
-    // STT saat Stop sengaja TIDAK ikut digate — cuma tombolnya yang disembunyikan.
-    if (audioMeta.count > 0 && settingsCache.transcriptSource === 'audio') {
-      const reBtn = btn('Transkrip ulang', async () => {
-        reBtn.disabled = true;
-        reBtn.textContent = 'Mentranskrip…';
-        momErrors.delete(meeting.id);
-        const res = await chrome.runtime.sendMessage(
-          { type: 'regenerate-transcript', id: meeting.id }).catch(() => null);
-        if (!res?.ok) {
-          momErrors.set(meeting.id, res?.error ?? 'Gagal menghubungi service worker.');
-          render();
-        }
-        // Sukses: hasil datang lewat broadcast meeting-updated, panel rerender sendiri.
-      });
-    }
-  }
+  if (!live && recState.transcribing && (audioMeta ?? []).some((r) => r.meetingId === meeting.id)) {
   view.append(actions);
 
   const list = el('div');
