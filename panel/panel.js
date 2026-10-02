@@ -180,8 +180,20 @@ async function render() {
 async function renderMeeting(id, live, epoch) {
   const meeting = id ? await getMeeting(id) : null;
   const viewKey = `${id}|${live}`;
-let audioMeta = null;       // daftar rekaman (listRecordings) terakhir, atau null
-let audioMetaKey = null;    // view key yang menghasilkannya (null = wajib tanya lagi)
+  // Daftar rekaman menentukan item "Unduh audio"/"Unduh video" dan "Transkrip
+  // ulang" (5 rekaman terakhir yang disimpan). Diambil SEBELUM replaceChildren
+  // supaya rerender 2-detikan tidak membuat action bar + daftar segmen
+  // berkedip, dan di-cache per view karena tiap panggilan = satu indexedDB.open.
+  // undefined = pembacaan GAGAL (jangan di-cache, tombolnya harus bisa muncul
+  // di render berikutnya), null = memang tak ada rekaman (aman di-cache).
+  let meta = audioMeta;
+  let metaKey = audioMetaKey;
+  if (meeting?.source !== 'audio') { meta = null; metaKey = null; }
+  else if (audioMetaKey !== viewKey) {
+    const res = await globalThis.MeetAudioStore.listRecordings().catch(() => undefined);
+    meta = res ?? null;
+    metaKey = res === undefined ? null : viewKey;
+  }
   if (epoch !== renderEpoch) return; // pass lebih baru sudah jalan
   // Cache baru ditulis SETELAH epoch dicek: pass yang kalah balapan tidak boleh
   // menimpa hasil pass yang lebih baru, walau ia sudah terlanjur membacanya.
@@ -323,24 +335,79 @@ let audioMetaKey = null;    // view key yang menghasilkannya (null = wajib tanya
   // di tab Riwayat tidak ada bar progres seperti di Live — tanpa baris ini,
   // "Transkrip ulang" yang diklik dari sini membuat seluruh blok tombol LENYAP
   // tanpa kabar apa pun sampai selesai.
-  // Daftar rekaman menentukan item "Unduh audio"/"Unduh video" dan "Transkrip
-  // ulang" (5 rekaman terakhir yang disimpan). Diambil SEBELUM replaceChildren
-  // supaya rerender 2-detikan tidak membuat action bar + daftar segmen
-  // berkedip, dan di-cache per view karena tiap panggilan = satu indexedDB.open.
-  // undefined = pembacaan GAGAL (jangan di-cache, tombolnya harus bisa muncul
-  // di render berikutnya), null = memang tak ada rekaman (aman di-cache).
-  let meta = audioMeta;
-  let metaKey = audioMetaKey;
-  if (meeting?.source !== 'audio') { meta = null; metaKey = null; }
-  else if (audioMetaKey !== viewKey) {
-    const res = await globalThis.MeetAudioStore.listRecordings().catch(() => undefined);
-    meta = res ?? null;
-    metaKey = res === undefined ? null : viewKey;
-  }
+  if (!live && recState.transcribing && (audioMeta ?? []).some((r) => r.meetingId === meeting.id)) {
     actions.append(el('span', 'muted',
       recState.total ? `Mentranskrip… ${recState.done}/${recState.total}` : 'Mentranskrip…'));
   }
-  if (!live && recState.transcribing && (audioMeta ?? []).some((r) => r.meetingId === meeting.id)) {
+  // Rekaman MILIK meeting ini yang punya isi. Gate audio (count) dan video
+  // (videoCount) DIPISAH per rekaman: part video mendarat tiap 60 detik, chunk
+  // audio baru tiap rotasi 10 menit — rekaman yang mati di menit 5 punya video
+  // tersimpan tapi count audio masih 0, dan gate gabungan menyembunyikan video
+  // yang sebenarnya bisa diselamatkan.
+  const recs = (audioMeta ?? []).filter((r) => r.meetingId === meeting.id
+    && (r.count > 0 || r.videoCount > 0));
+  if (recs.length && !recState.recording && !recState.transcribing) {
+    // Satu rekaman: label persis seperti sebelum fitur ini ada. Jam mulai cuma
+    // muncul kalau memang ada yang perlu dibedakan.
+    const many = recs.length > 1;
+    const jam = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    for (const r of recs) {
+      const tag = many ? ` — ${jam(r.baseTime)}` : '';
+      const sfx = many ? `-${jam(r.baseTime).replace(/\D/g, '')}` : '';
+      if (r.count > 0) {
+        // Chunk disimpan sambil merekam, jadi item ini juga jalur penyelamat
+        // kalau rekaman mati di tengah (browser ditutup) atau STT gagal total:
+        // audionya tetap utuh sampai potongan terakhir yang sempat ditulis.
+        dl.item(`Unduh audio${tag}${r.count > 1 ? ` (${r.count} file)` : ''}`, async () => {
+          const n = await downloadAudio(meeting, r, sfx).catch(() => 0);
+          flash(dl.head, n ? `Diunduh ✓${n > 1 ? ` (${n} file)` : ''}` : 'Audio tidak ditemukan', 3000);
+        });
+        // Chrome memblok unduhan beruntun sampai user mengizinkan sekali — tanpa
+        // keterangan ini, file ke-2 dst tampak hilang begitu saja. Di dalam
+        // menu, di bawah item yang dijelaskannya.
+        if (r.count > 1) dl.list.append(el('span', 'muted',
+          'Beberapa file: izinkan "Download multiple files" kalau Chrome bertanya.'));
+      }
+      if (r.videoCount > 0) {
+        dl.item(`Unduh video${tag}`, async () => {
+          const ok = await downloadVideo(meeting, r, sfx).catch(() => false);
+          flash(dl.head, ok ? 'Diunduh ✓' : 'Video tidak ditemukan', 3000);
+        });
+      }
+    }
+    // Hanya saat Sumber transkrip = Rekam audio (pilihan user 2026-09-09): di
+    // mode caption transkrip datang dari caption, tombol ini cuma membingungkan.
+    // STT saat Stop sengaja TIDAK ikut digate — cuma tombolnya yang disembunyikan.
+    const reable = recs.filter((r) => r.count > 0);
+    if (reable.length && settingsCache.transcriptSource === 'audio') {
+      const jalankan = async (r, setLabel) => {
+        setLabel('Mentranskrip…');
+        momErrors.delete(meeting.id);
+        const res = await chrome.runtime.sendMessage(
+          { type: 'regenerate-transcript', id: meeting.id, recId: r.recId }).catch(() => null);
+        if (!res?.ok) {
+          momErrors.set(meeting.id, res?.error ?? 'Gagal menghubungi service worker.');
+          render();
+        }
+        // Sukses: hasil datang lewat broadcast meeting-updated, panel rerender sendiri.
+      };
+      if (reable.length === 1) {
+        const reBtn = btn('Transkrip ulang', () => {
+          reBtn.disabled = true;
+          return jalankan(reable[0], (t) => { reBtn.textContent = t; });
+        });
+      } else {
+        // Dropdown, bukan satu tombol per rekaman: tiap baris transkrip sudah
+        // ditandai audio:<baseTime>:, jadi transkrip ulang per rekaman hanya
+        // mengganti baris miliknya — pilihannya bermakna, bukan sekadar daftar.
+        const re = dropdown('retranskrip', 'Transkrip ulang');
+        for (const r of reable) {
+          re.item(`dari rekaman ${jam(r.baseTime)}`,
+            () => jalankan(r, (t) => { re.head.textContent = t; }));
+        }
+      }
+    }
+  }
   view.append(actions);
 
   const list = el('div');
