@@ -24,7 +24,7 @@ Seluruh data rapat disimpan secara lokal di peramban (*browser*) Anda. Tanpa ser
 * **Pembuatan MoM Otomatis:** Menghasilkan *context*, *discussion*, peserta, dan *action items* menggunakan *endpoint* LLM yang kompatibel dengan OpenAI (misal: `gpt-4o-mini`). *Template* dapat dikustomisasi.
 * **Fleksibilitas Tanpa API Key:** Anda dapat menyalin *prompt* beserta transkrip ke *clipboard*, atau mengirimkannya secara otomatis ke Google Gemini atau ChatGPT di *tab* baru tanpa memerlukan integrasi API.
 * **Manajemen Riwayat Lokal:** Transkrip, MoM, dan setelan tersimpan di `chrome.storage.local`; potongan audio di IndexedDB. Ekspor riwayat ke `.txt` atau `.md` kapan saja.
-* **Backup & Restore:** Tombol **Export backup (.zip)** di Settings menyimpan seluruh data (riwayat, MoM, setelan, rekaman terakhir) ke satu fail ZIP; **Import backup** memulihkannya — termasuk setelah *uninstall*/pindah komputer.
+* **Backup & Restore:** Tombol **Export backup (.zip)** di Settings menyimpan data teks (riwayat, MoM, setelan) ke satu fail ZIP — **bukan** fail rekaman: audio & video tidak ikut karena bisa ratusan MB per rekaman, unduh sendiri dari entri Riwayat → **Unduh**. **Import backup** memulihkan data teks itu — termasuk setelah *uninstall*/pindah komputer — dan **menghapus rekaman yang tersimpan saat itu**.
 * **Sadar Rapat Berulang:** Rapat *recurring* memakai link (kode ruang) yang sama — setiap sesi tetap menjadi entri Riwayat terpisah. Jeda lebih dari 30 menit setelah rapat berakhir dianggap sesi baru; keluar-masuk sebentar tetap tersambung ke sesi yang sama.
 * **Penyelamatan Audio Cerdas:** Potongan audio disimpan ke IndexedDB selama proses perekaman. Jika terjadi kesalahan konfigurasi STT, Anda cukup melakukan "Transkrip ulang" tanpa kehilangan data audio.
 * **Siklus Hidup Otomatis:** Perekaman berhenti otomatis saat rapat selesai (keluar panggilan, pindah ruang, atau *tab* ditutup).
@@ -99,7 +99,7 @@ Anda dapat merekam audio *tab* untuk ditranskripsi via STT, baik secara mandiri 
 * Pintasan bawaan: `Alt+Shift+R` (audio), `Alt+Shift+V` (audio + video), `Alt+Shift+S` (stop). Dapat diubah di `chrome://extensions/shortcuts`. Berguna di Discord, yang menelan *event* `contextmenu` sehingga menu klik kanan bawaan peramban tidak muncul (`Shift`+klik kanan memaksanya muncul).
 * Bawaan: hanya suara peserta lain (*tab audio*) yang direkam. Centang **Rekam mikrofon** di *Settings* agar suara Anda ikut, lalu klik **Izinkan mikrofon** sekali untuk memberi izin (kalau belum, jendela izin muncul otomatis saat rekaman dimulai; rekaman *tab* tetap jalan dan mic bergabung begitu disetujui). Tanpa headset, suara peserta dari speaker bisa ikut terekam lewat mic (dobel).
 * Setiap 10 menit, potongan audio disimpan ke IndexedDB untuk mencegah kehilangan data jika peramban tertutup mendadak. Potongan tersebut dapat diunduh kapan saja melalui tombol **Unduh audio** sebagai fail `.webm` terpisah (membutuhkan izin *"Download multiple files"* pada Chrome bila lebih dari satu potongan).
-* Hanya audio dari rekaman **terakhir** yang disimpan. Jika Anda memulai perekaman baru, data audio sebelumnya akan dihapus.
+* Hanya **5 rekaman terakhir** yang disimpan. Saat rekaman baru dimulai, rekaman tertua di luar lima itu dihapus — audio beserta videonya.
 
 ### Pilihan Mode STT (Speech-to-Text)
 

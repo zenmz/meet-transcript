@@ -328,9 +328,10 @@ async function renderMeeting(id, live, epoch) {
   const dl = dropdown('unduh', 'Unduh');
   dl.item('Unduh .txt', () => download(`${meeting.title}.txt`, M.formatTranscript(meeting.segments)));
   dl.item('Unduh .md', () => download(`${meeting.title}.md`, M.formatMarkdown(meeting)));
-  // Disembunyikan saat rekam/transkrip jalan: audio tersimpan masih milik
-  // rekaman SEBELUMNYA, jadi menawarkannya di samping "Stop rekam" cuma
-  // membingungkan — SW menolak kliknya juga.
+  // Disembunyikan saat rekam/transkrip jalan: itu keputusan cakupan yang
+  // disengaja. Membedakan "rekaman yang sedang jalan" dari "rekaman lama
+  // meeting ini" di gate ini menambah satu cabang untuk untung tipis, dan SW
+  // menolak kliknya juga.
   // Tombol audio disembunyikan selama rekam/transkrip (SW menolak kliknya), tapi
   // di tab Riwayat tidak ada bar progres seperti di Live — tanpa baris ini,
   // "Transkrip ulang" yang diklik dari sini membuat seluruh blok tombol LENYAP
@@ -770,11 +771,10 @@ async function renderSettings(epoch) {
   const setBnote = (cls, text) => { bnote.className = cls; bnote.textContent = ' ' + text; };
   const exportBtn = el('button', null, 'Export backup (.zip)');
   exportBtn.addEventListener('click', async () => {
-    // Digate sama seperti import: rekaman yang sedang jalan baru menulis
-    // potongan tiap rotasi, jadi zip yang dibuat sekarang memuat rekaman
-    // separuh jadi — dan cacatnya baru ketahuan saat file itu di-restore.
-    // Meeting caption live ikut digate: segmen masuk tiap 500 ms, zip-nya
-    // memuat transkrip yang terpotong di tengah.
+    // Digate sama seperti import. Isi zip tak lagi bergantung pada rekaman,
+    // tapi `transcribing` tetap relevan: transkrip sedang akan ditulis.
+    // `inCall` juga: segmen caption masuk tiap 500 ms, jadi zip-nya memuat
+    // transkrip yang terpotong di tengah kalimat.
     if (recState.recording || recState.transcribing || status.inCall) {
       return setBnote('err', '✗ Rekaman/transkrip/meeting sedang berjalan — backup akan memuat data separuh. Tunggu selesai dulu.');
     }
@@ -841,7 +841,8 @@ async function renderSettings(epoch) {
     'Backup berisi transkrip, MoM, dan Settings — bukan file rekaman. Audio & '
     + 'video tidak ikut karena bisa ratusan MB per rekaman. Unduh sendiri dari '
     + 'entri Riwayat → Unduh. Yang tersimpan hanya 5 rekaman terakhir; lebih '
-    + 'tua dari itu terhapus saat rekaman baru mulai.'));
+    + 'tua dari itu terhapus saat rekaman baru mulai. Import backup juga MENGHAPUS '
+    + 'rekaman yang tersimpan saat itu.'));
 }
 
 chrome.storage.onChanged.addListener((c, area) => {

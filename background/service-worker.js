@@ -167,8 +167,7 @@ async function startFromTab(tab, video) {
   // kanan, atau tab aktif saat tombol/shortcut dipakai. Tak ada jalur yang
   // mencampur keduanya: kalau id diambil dari tab lain daripada yang direkam,
   // yang terekam bisa halaman sunyi sementara record meeting di tab lain yang
-  // kena akibatnya — source dibalik jadi audio, endedAt dihapus, dan audio
-  // tersimpannya dibuang oleh beginAudio.
+  // kena akibatnya — source dibalik jadi audio dan endedAt dihapus.
   const meetingId = meetingIdFromUrl(tab?.url);
   if (!meetingId) {
     recError('Buka halaman ruang Meet / channel Discord-nya dulu — rekaman mengambil audio tab ini. URL tab: ' + (tab?.url ?? '(tidak terbaca)'));
