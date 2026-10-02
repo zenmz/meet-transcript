@@ -30,6 +30,12 @@ function toSW(msg) { chrome.runtime.sendMessage(msg).catch(() => {}); }
 
 function startChunkRecorder() {
   const data = []; // per-recorder: rotasi tak boleh menabrak data recorder lain
+  // recId ditangkap SEKARANG, bukan dibaca dari cfg saat event datang: onstop
+  // yang terlambat dari recorder yang sudah dibongkar harus menulis ke
+  // rekamannya SENDIRI. Dulu ia menulis ke satu-satunya meta yang ada — yaitu
+  // milik rekaman BERIKUTNYA, yang count-nya jadi naik untuk chunk yang bukan
+  // miliknya.
+  const recId = cfg.baseTime;
   // recStream = campuran tab + mic dari Web Audio, audio-only — saat mode
   // video, track video ada di `stream`, tidak di sini (MIME audio menolaknya).
   recorder = new MediaRecorder(recStream, { mimeType: MIME });
@@ -41,7 +47,7 @@ function startChunkRecorder() {
     // yang browsernya ditutup di menit ke-50 menyisakan 5 chunk yang bisa
     // ditranskrip ulang & diunduh, bukan nol. Kegagalan simpan tidak
     // membatalkan transkrip — chunkBlobs (memori) tetap sumber transkrip.
-    pendingSaves.push(globalThis.MeetAudioStore.appendChunk(blob).catch((e) =>
+    pendingSaves.push(globalThis.MeetAudioStore.appendChunk(blob, recId).catch((e) =>
       toSW({ type: 'audio-warn', meetingId: cfg?.meetingId,
         error: 'Satu potongan audio gagal disimpan untuk transkrip ulang: ' + e.message })));
   };
@@ -124,6 +130,7 @@ function rotateChunk() {
 // memutus recorder berarti memutus file. Timeslice 60 detik: crash di tengah
 // meeting kehilangan maksimal 1 menit video terakhir, bukan seluruh file.
 function startVideoRecorder() {
+  const recId = cfg.baseTime; // di closure, alasan sama dengan startChunkRecorder
   // Video dari tab, audio dari campuran: pakai `stream` mentah berarti file
   // video tanpa suara mic padahal rekaman audionya memuatnya.
   videoRecorder = new MediaRecorder(
@@ -134,7 +141,7 @@ function startVideoRecorder() {
   });
   videoRecorder.ondataavailable = (e) => {
     if (!e.data.size) return;
-    pendingSaves.push(globalThis.MeetAudioStore.appendVideoPart(e.data).catch((err) =>
+    pendingSaves.push(globalThis.MeetAudioStore.appendVideoPart(e.data, recId).catch((err) =>
       toSW({ type: 'audio-warn', meetingId: cfg?.meetingId,
         error: 'Satu potongan video gagal disimpan — file video bisa rusak mulai menit itu: ' + err.message })));
   };
@@ -316,10 +323,12 @@ async function stopAndTranscribe() {
 async function retranscribe(msg) {
   busy = true;
   try {
-    const saved = await globalThis.MeetAudioStore.loadAudio();
-    if (!saved) throw new Error('Audio rekaman tidak tersimpan lagi.');
+    const saved = await globalThis.MeetAudioStore.loadAudio(msg.recId);
+    if (!saved) throw new Error('Audio rekaman tidak tersimpan lagi — hanya 5 rekaman terakhir yang disimpan.');
     if (saved.meetingId !== msg.meetingId) {
-      throw new Error('Audio tersimpan milik meeting lain — hanya rekaman terakhir yang disimpan.');
+      // Cek tetap ada walau SW sudah memvalidasi: recId dari panel bisa basi
+      // (daftarnya di-cache) dan retag arsip bisa mengubah meetingId di sela.
+      throw new Error('Audio tersimpan milik meeting lain.');
     }
     // chunkMs/baseTime/indices dari rekaman asli supaya timestamp segmen tetap
     // sama; endpoint & model diambil dari settings TERBARU lewat msg.
