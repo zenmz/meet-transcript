@@ -762,8 +762,9 @@ async function renderSettings(epoch) {
   actions.append(test, save, note);
   view.append(actions);
 
-  // Backup seluruh data (riwayat+MoM+settings+rekaman terakhir) ke satu zip,
-  // dan import-nya. Satu-satunya jalur selamat data melewati uninstall.
+  // Backup data TEKS (riwayat+MoM+settings) ke satu zip, dan import-nya. Satu-
+  // satunya jalur selamat data melewati uninstall. Rekaman tidak ikut — lihat
+  // exportBackup di lib/backup.js.
   view.append(el('h3', null, 'Backup'));
   const bnote = el('span', 'muted', '');
   const setBnote = (cls, text) => { bnote.className = cls; bnote.textContent = ' ' + text; };
@@ -778,11 +779,15 @@ async function renderSettings(epoch) {
       return setBnote('err', '✗ Rekaman/transkrip/meeting sedang berjalan — backup akan memuat data separuh. Tunggu selesai dulu.');
     }
     exportBtn.disabled = true;
-    setBnote('muted', 'Menyusun zip…'); // rekaman video besar — bisa beberapa detik
+    setBnote('muted', 'Menyusun zip…');
     try {
       const zip = await globalThis.MeetBackup.exportBackup();
       download(`meet-transcript-backup-${new Date().toISOString().slice(0, 10)}.zip`, zip);
-      setBnote('ok', `✓ Backup siap (${(zip.size / 1048576).toFixed(1)} MB).`);
+      // KB di bawah 1 MB: backup teks hampir selalu di bawah itu, dan
+      // "0.0 MB" terbaca seperti export yang gagal.
+      setBnote('ok', `✓ Backup siap (${zip.size < 1048576
+        ? `${Math.max(1, Math.round(zip.size / 1024))} KB`
+        : `${(zip.size / 1048576).toFixed(1)} MB`}).`);
     } catch (e) {
       setBnote('err', '✗ Export gagal: ' + (e?.message ?? e));
     } finally {
@@ -815,9 +820,11 @@ async function renderSettings(epoch) {
       // Rekaman gagal di-restore TIDAK dilaporkan sebagai "import gagal":
       // transkrip & settings sudah masuk, dan menyebutnya gagal membuat user
       // mengira data lamanya masih utuh — padahal sudah tertimpa.
+      // Potongan rekaman hanya disebut kalau memang ada (ZIP lama): angka 0 di
+      // backup teks terbaca seperti ada yang hilang.
       alert(r.audioError
         ? `Import selesai SEBAGIAN: ${r.meetings} meeting masuk, tapi rekaman audio/video gagal di-restore (${r.audioError}). Data lama sudah tergantikan.`
-        : `Import selesai: ${r.meetings} meeting, ${r.chunks} potongan rekaman.`);
+        : `Import selesai: ${r.meetings} meeting${r.chunks ? `, ${r.chunks} potongan rekaman` : ''}.`);
       // Render ulang WAJIB: form masih berisi nilai pra-import, dan "Simpan"
       // dari form basi itu menimpa settings yang barusan di-import.
       render();
@@ -830,6 +837,11 @@ async function renderSettings(epoch) {
   const backupRow = el('div', 'actions');
   backupRow.append(exportBtn, importBtn, importInput, bnote);
   view.append(backupRow);
+  view.append(el('div', 'muted',
+    'Backup berisi transkrip, MoM, dan Settings — bukan file rekaman. Audio & '
+    + 'video tidak ikut karena bisa ratusan MB per rekaman. Unduh sendiri dari '
+    + 'entri Riwayat → Unduh. Yang tersimpan hanya 5 rekaman terakhir; lebih '
+    + 'tua dari itu terhapus saat rekaman baru mulai.'));
 }
 
 chrome.storage.onChanged.addListener((c, area) => {
