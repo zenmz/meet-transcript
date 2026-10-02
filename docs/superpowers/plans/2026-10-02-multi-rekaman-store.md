@@ -713,10 +713,15 @@ Di `test/sw.test.mjs`, ubah tanda tangan `loadSw` jadi
 ```js
   const ctx = vm.createContext({ chrome, console, URL });
   // Ditanam lewat script, bukan lewat properti contextObject: SW membacanya
-  // sebagai globalThis.MeetAudioStore, dan di Chrome ia datang dari
-  // importScripts — yang di Node dilewati.
-  vm.runInContext('globalThis.MeetAudioStore = {};', ctx);
+  // sebagai globalThis.MeetAudioStore / globalThis.MeetStt, dan di Chrome
+  // keduanya datang dari importScripts — yang di Node dilewati.
+  vm.runInContext('globalThis.MeetAudioStore = {}; globalThis.MeetStt = {};', ctx);
   ctx.MeetAudioStore.listRecordings = async () => recordings;
+  // sttConfig() memanggil MeetStt.sttEndpoint (background/service-worker.js:237)
+  // di jalur transkrip ulang yang SAH. Tanpa stub ini tesnya mati dengan
+  // TypeError, bukan gagal karena hal yang diuji.
+  ctx.MeetStt.sttEndpoint = () => ({ mode: 'api', baseUrl: 'http://localhost:1/v1',
+    apiKey: '', model: 'whisper-1', language: '' });
   vm.runInContext(SRC, ctx);
 ```
 
