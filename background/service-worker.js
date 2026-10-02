@@ -325,10 +325,16 @@ async function startRecordingInner({ streamId, meetingId, title, baseTime, video
 
 // Transkrip ulang dari audio tersimpan: offscreen yang mengerjakan (bukan SW —
 // SW MV3 bisa dimatikan di tengah loop upload yang panjang).
-async function regenerateTranscript(meetingId) {
+async function regenerateTranscript(meetingId, recId) {
   if (rec.recording || rec.transcribing) throw new Error('Rekaman/transkrip masih berjalan.');
+  // Divalidasi SEBELUM rec ditandai transcribing: pesan tanpa recId (panel
+  // versi lama, pesan basi setelah reload) yang lolos ke bawah akan membuat
+  // rec tersangkut transcribing:true tanpa ada yang bekerja.
+  if (!Number.isFinite(Number(recId))) {
+    throw new Error('Rekaman yang mau ditranskrip ulang tidak disebut (recId kosong).');
+  }
   // rec di-set SEBELUM await pertama: ini satu-satunya penyerialisasi transkrip.
-  // Kalau dipasang setelah await (mis. setelah loadAudioMeta), dua panggilan
+  // Kalau dipasang setelah await (mis. setelah listRecordings), dua panggilan
   // regenerate-transcript beruntun (klik ganda dari panel) sama-sama lolos
   // guard di atas sebelum salah satu sempat menandai transcribing — dua loop
   // transkrip jalan bersamaan dan meeting yang sama dapat dua audio-transcript.
@@ -342,10 +348,13 @@ async function regenerateTranscript(meetingId) {
     // transkrip ulang terblokir selamanya. Penjaganya ada di offscreen sendiri
     // (busy || recorder), yang justru selamat dari restart SW dan membalas
     // {ok:false}; balasan itu diperiksa di bawah.
-    const meta = await globalThis.MeetAudioStore.loadAudioMeta();
-    if (!meta) throw new Error('Tidak ada audio tersimpan.');
-    if (meta.meetingId !== meetingId) {
-      throw new Error('Audio tersimpan milik meeting lain — hanya rekaman terakhir yang disimpan.');
+    const target = (await globalThis.MeetAudioStore.listRecordings())
+      .find((r) => r.recId === Number(recId));
+    if (!target) {
+      throw new Error('Rekaman itu sudah tidak tersimpan — hanya 5 rekaman terakhir yang disimpan.');
+    }
+    if (target.meetingId !== meetingId) {
+      throw new Error('Rekaman itu milik meeting lain — hanya rekaman meeting ini yang bisa ditranskrip ulang.');
     }
     const stt = await sttConfig();
     await ensureOffscreen();
@@ -354,7 +363,7 @@ async function regenerateTranscript(meetingId) {
     // sudah tertutup — dan rec.transcribing macet true tanpa ada yang bekerja.
     // Panel tidak pernah membalas pesan ini, jadi balasan offscreen yang menang.
     const res = await chrome.runtime.sendMessage({
-      target: 'offscreen', op: 'retranscribe', meetingId, ...stt,
+      target: 'offscreen', op: 'retranscribe', meetingId, recId: target.recId, ...stt,
     });
     if (!res?.ok) throw new Error(res?.error || 'Offscreen tidak merespons — transkrip ulang tidak dimulai.');
   } catch (e) {
@@ -794,7 +803,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return false;
   }
   if (msg.type === 'regenerate-transcript') {
-    regenerateTranscript(msg.id).then(
+    regenerateTranscript(msg.id, msg.recId).then(
       () => sendResponse({ ok: true }),
       (e) => sendResponse({ ok: false, error: e.message })
     );

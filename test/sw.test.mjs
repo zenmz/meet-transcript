@@ -12,7 +12,7 @@ import vm from 'node:vm';
 const SRC = readFileSync(new URL('../background/service-worker.js', import.meta.url), 'utf8');
 
 // `offscreen` null = dokumen offscreen tidak ada (mati / belum pernah dibuat).
-function loadSw({ offscreen }) {
+function loadSw({ offscreen, recordings = [] }) {
   const sent = [];
   let badge = null;
   const chrome = {
@@ -37,7 +37,18 @@ function loadSw({ offscreen }) {
     offscreen: { closeDocument: async () => {} },
   };
   const handlers = [];
-  vm.runInContext(SRC, vm.createContext({ chrome, console, URL }));
+  const ctx = vm.createContext({ chrome, console, URL });
+  // Ditanam lewat script, bukan lewat properti contextObject: SW membacanya
+  // sebagai globalThis.MeetAudioStore / globalThis.MeetStt, dan di Chrome
+  // keduanya datang dari importScripts — yang di Node dilewati.
+  vm.runInContext('globalThis.MeetAudioStore = {}; globalThis.MeetStt = {};', ctx);
+  ctx.MeetAudioStore.listRecordings = async () => recordings;
+  // sttConfig() memanggil MeetStt.sttEndpoint (background/service-worker.js:237)
+  // di jalur transkrip ulang yang SAH. Tanpa stub ini tesnya mati dengan
+  // TypeError, bukan gagal karena hal yang diuji.
+  ctx.MeetStt.sttEndpoint = () => ({ mode: 'api', baseUrl: 'http://localhost:1/v1',
+    apiKey: '', model: 'whisper-1', language: '' });
+  vm.runInContext(SRC, ctx);
   // Kirim pesan seperti Chrome: listener yang return true membalas async.
   const ask = (msg) => new Promise((resolve) => {
     for (const f of handlers) if (f(msg, {}, resolve) === true) return;
@@ -94,4 +105,46 @@ test('tanpa dokumen offscreen, enable-mic tidak dikirim ke mana pun', async () =
   await sw.ask({ type: 'enable-mic' });
   await flush();
   assert.ok(!sw.sent.some((m) => m.op === 'mic-enable'));
+});
+
+test('regenerate-transcript tanpa recId ditolak, tanpa menyentuh offscreen', async () => {
+  // Pesan dari panel versi lama, atau pesan basi setelah reload. Tanpa guard
+  // ini rec tersangkut transcribing:true selamanya — start, stop, dan
+  // transkrip ulang berikutnya ditolak sampai browser di-restart.
+  const sw = loadSw({ offscreen: null,
+    recordings: [{ recId: 1000, meetingId: 'abc-defg-hij', count: 2 }] });
+  const res = await sw.ask({ type: 'regenerate-transcript', id: 'abc-defg-hij' });
+  assert.equal(res.ok, false);
+  assert.match(res.error, /recId|rekaman/i);
+  assert.ok(!sw.sent.some((m) => m.op === 'retranscribe'));
+  const a = await sw.ask({ type: 'get-active' });
+  assert.equal(a.rec.transcribing, false);
+});
+
+test('recId yang sudah terpangkas ditolak dengan pesan yang menjelaskan', async () => {
+  const sw = loadSw({ offscreen: null,
+    recordings: [{ recId: 1000, meetingId: 'abc-defg-hij', count: 2 }] });
+  const res = await sw.ask({ type: 'regenerate-transcript', id: 'abc-defg-hij', recId: 999 });
+  assert.equal(res.ok, false);
+  assert.match(res.error, /5 rekaman terakhir/);
+  assert.ok(!sw.sent.some((m) => m.op === 'retranscribe'));
+});
+
+test('recId milik meeting lain ditolak', async () => {
+  const sw = loadSw({ offscreen: null,
+    recordings: [{ recId: 1000, meetingId: 'discord-1-2', count: 2 }] });
+  const res = await sw.ask({ type: 'regenerate-transcript', id: 'abc-defg-hij', recId: 1000 });
+  assert.equal(res.ok, false);
+  assert.match(res.error, /meeting lain/);
+  assert.ok(!sw.sent.some((m) => m.op === 'retranscribe'));
+});
+
+test('recId sah diteruskan ke offscreen bersama recId-nya', async () => {
+  const sw = loadSw({ offscreen: { recording: false, transcribing: false, meetingId: null },
+    recordings: [{ recId: 1000, meetingId: 'abc-defg-hij', count: 2 }] });
+  const res = await sw.ask({ type: 'regenerate-transcript', id: 'abc-defg-hij', recId: 1000 });
+  assert.equal(res.ok, true);
+  const sent = sw.sent.find((m) => m.op === 'retranscribe');
+  assert.equal(sent.recId, 1000);
+  assert.equal(sent.meetingId, 'abc-defg-hij');
 });
