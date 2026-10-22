@@ -179,7 +179,7 @@ Membutuhkan `node` (skrip membaca versi dari `manifest.json`) dan `gh` CLI yang 
 ./scripts/pack.sh --release
 ```
 
-*(Skrip membangun ZIP Chrome lalu memublikasikannya ke GitHub Releases — ZIP hanya untuk Chrome/Chromium. Rilis Firefox terpisah dan tanpa ZIP di GitHub: upload versi baru di [AMO Developer Hub](https://addons.mozilla.org/developers/) — pengguna Firefox mendapat update otomatis dari [halaman add-on](https://addons.mozilla.org/en-US/firefox/addon/meet-transcript/).)*
+*(Skrip membangun ZIP Chrome lalu memublikasikannya ke GitHub Releases — ZIP hanya untuk Chrome/Chromium. Rilis Firefox terpisah dan tanpa ZIP di GitHub: jalankan `./scripts/pack.sh --firefox` untuk membangun `dist/meet-transcript-firefox-vX.Y.Z.zip` (diperiksa `web-ext lint` dulu), lalu upload sebagai versi baru di [AMO Developer Hub](https://addons.mozilla.org/developers/) — pengguna Firefox mendapat update otomatis dari [halaman add-on](https://addons.mozilla.org/en-US/firefox/addon/meet-transcript/).)*
 
 ---
 
