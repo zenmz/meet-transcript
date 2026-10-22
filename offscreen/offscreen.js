@@ -12,13 +12,14 @@ let rotateTimer = null;
 let silenceTimer = null;
 let chunkBlobs = [];   // Blob standalone per chunk
 let pendingSaves = []; // appendChunk yang belum selesai (ditunggu sebelum stop)
-let cfg = null;        // {baseUrl, apiKey, sttMode, sttModel, sttLanguage, chunkMs, baseTime, meetingId}
+let cfg = null;        // {baseUrl, apiKey, sttMode, sttModel, sttLanguage, chunkMs, baseTime, meetingId, transcribe}
 // Offscreen menyerialisasi dirinya sendiri: guard rec.transcribing di SW cuma
 // bertahan selama SW hidup, padahal SW MV3 bisa mati di tengah upload yang
 // panjang sementara dokumen ini terus bekerja. Tanpa flag ini, perintah stop
 // kedua menimpa audio tersimpan dengan array kosong dan membunuh transkrip
 // yang sedang jalan.
 let busy = false;
+let sttRunning = false; // transcribeChunks sedang jalan (untuk op 'state')
 const MIME = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
   ? 'audio/webm;codecs=opus' : 'audio/webm';
 const VIDEO_MIME = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
@@ -232,32 +233,44 @@ function transcribeOne(blob, c) {
 }
 
 // Dipakai dua jalur: setelah rekam selesai (replace=false, hasilnya grup baru),
-// dan tombol "Transkrip ulang" (replace=true, menggantikan grup yang sama).
+// dan tombol "Generate transkrip"/"Transkrip ulang" (replace=true, menggantikan
+// grup rekaman yang sama kalau sudah ada).
 async function transcribeChunks(blobs, c, replace) {
-  const results = [];
-  for (let i = 0; i < blobs.length; i++) {
-    toSW({ type: 'audio-progress', meetingId: c.meetingId, done: i, total: blobs.length });
-    try {
-      results.push(await transcribeOne(blobs[i], c));
-    } catch (e) {
-      results.push({ error: e.message });
+  sttRunning = true;
+  try {
+    const results = [];
+    for (let i = 0; i < blobs.length; i++) {
+      toSW({ type: 'audio-progress', meetingId: c.meetingId, done: i, total: blobs.length });
+      try {
+        results.push(await transcribeOne(blobs[i], c));
+      } catch (e) {
+        results.push({ error: e.message });
+      }
     }
+    // Pesan error per potongan (mis. "HTTP 404 dari localhost:8080") hanya
+    // hidup di sini — mergeSttChunks meringkasnya jadi "[transkrip gagal]".
+    // Tanpa ringkasan ini transkrip yang seluruhnya gagal tampil seperti sukses.
+    const errs = results.filter((r) => r?.error).map((r) => r.error);
+    const errSummary = errs.length ? `${errs.length}/${blobs.length} potongan gagal ditranskrip: ${errs[0]}` : null;
+    // Transkrip ulang yang GAGAL TOTAL tidak boleh menulis apa pun: hasilnya
+    // adalah baris "[transkrip gagal]" per potongan — tidak kosong, jadi ia lolos
+    // semua penjaga di hilir dan menimpa transkrip lama yang justru masih bagus.
+    // Rekaman baru tidak kena aturan ini: di sana tak ada yang bisa hilang, dan
+    // penanda gagal itu justru memberi tahu di menit mana audionya ada.
+    // Syaratnya ADA TEKS, bukan sekadar "ada potongan yang tidak error": potongan
+    // sunyi menghasilkan {segments:[]} yang bukan error, jadi kombinasi
+    // sunyi + endpoint mati tetap lolos dan menimpa transkrip lama dengan baris
+    // "[transkrip gagal]" saja.
+    if (replace && !results.some((r) => r && !r.error && r.segments?.length)) {
+      throw new Error('Transkrip tidak menghasilkan teks — transkrip yang ada tidak diubah.'
+        + (errs.length ? ` Error STT: ${errs[0]}` : ' Cek endpoint/model STT di Settings.'));
+    }
+    const segments = globalThis.MeetStt.mergeSttChunks(results, c.chunkMs, c.baseTime, c.indices);
+    toSW({ type: 'audio-transcript', meetingId: c.meetingId, segments, baseTime: c.baseTime,
+      replace: !!replace, legacy: !!c.legacy, error: errSummary });
+  } finally {
+    sttRunning = false;
   }
-  // Transkrip ulang yang GAGAL TOTAL tidak boleh menulis apa pun: hasilnya
-  // adalah baris "[transkrip gagal]" per potongan — tidak kosong, jadi ia lolos
-  // semua penjaga di hilir dan menimpa transkrip lama yang justru masih bagus.
-  // Rekaman baru tidak kena aturan ini: di sana tak ada yang bisa hilang, dan
-  // penanda gagal itu justru memberi tahu di menit mana audionya ada.
-  // Syaratnya ADA TEKS, bukan sekadar "ada potongan yang tidak error": potongan
-  // sunyi menghasilkan {segments:[]} yang bukan error, jadi kombinasi
-  // sunyi + endpoint mati tetap lolos dan menimpa transkrip lama dengan baris
-  // "[transkrip gagal]" saja.
-  if (replace && !results.some((r) => r && !r.error && r.segments?.length)) {
-    throw new Error('Transkrip ulang tidak menghasilkan teks — transkrip lama dipertahankan. Cek endpoint/model STT.');
-  }
-  const segments = globalThis.MeetStt.mergeSttChunks(results, c.chunkMs, c.baseTime, c.indices);
-  toSW({ type: 'audio-transcript', meetingId: c.meetingId, segments, baseTime: c.baseTime,
-    replace: !!replace, legacy: !!c.legacy });
 }
 
 async function stopAndTranscribe() {
@@ -312,6 +325,14 @@ async function stopAndTranscribe() {
     await audioCtx?.close().catch(() => {});
     audioCtx = null; stream = null; recorder = null; videoRecorder = null;
 
+    // transcribe false = rekaman arsip (Meet bermode caption, Discord, Zoom):
+    // potongannya sudah tersimpan (pendingSaves di atas) untuk Unduh dan
+    // "Generate transkrip" manual — tak ada yang dikirim ke STT sekarang.
+    if (!cfg.transcribe) {
+      chunkBlobs = [];
+      toSW({ type: 'audio-saved', meetingId: cfg.meetingId });
+      return;
+    }
     const blobs = chunkBlobs;
     chunkBlobs = [];
     await transcribeChunks(blobs, cfg, false);
@@ -392,8 +413,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     // cuma hidup di memori, dan SW MV3 mati tiap ~30 detik menganggur. Jawaban
     // di sini tidak bisa berbohong seperti state tersimpan — kalau dokumennya
     // mati, pesan ini tak terjawab sama sekali.
+    // tabId & autoStt dipulihkan SW (lihat recRestored): autoStt false selagi
+    // busy = Stop sedang menyimpan arsip, bukan mentranskrip.
     sendResponse({ ok: true, recording: !!recorder, transcribing: busy,
-      meetingId: cfg?.meetingId ?? null });
+      meetingId: cfg?.meetingId ?? null, tabId: cfg?.tabId ?? null,
+      autoStt: sttRunning || !!cfg?.transcribe });
     return false;
   } else if (msg.op === 'mic-enable') {
     // Mic dinyalakan SENGAJA dari popup di tengah rekaman. Beda dari

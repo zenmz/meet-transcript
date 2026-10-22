@@ -12,6 +12,10 @@
   let attempts = 0;
   let busy = false;
   let wasInCall = false;
+  // Tombol keluar berkedip saat Meet menukar layout (session.js: LEAVE_TICKS).
+  // Satu tick tanpa inCall BUKAN call baru — tanpa debounce ini bahasa yang
+  // user pilih sendiri di UI Meet dibalik lagi ke default setelah kedipan itu.
+  let goneTicks = 0;
 
   function reset() { applied = false; attempts = 0; }
 
@@ -55,7 +59,11 @@
   // akan dibalik lagi dalam 2 detik.
   const timer = setInterval(() => {
     if (!chrome.runtime?.id) { clearInterval(timer); return; } // script yatim
-    if (!S.inCall()) { wasInCall = false; reset(); return; }
+    if (!S.inCall()) {
+      if (++goneTicks >= 2) { wasInCall = false; reset(); }
+      return;
+    }
+    goneTicks = 0;
     if (!wasInCall) { wasInCall = true; reset(); } // call baru → terapkan lagi
     if (applied || busy || attempts >= 3) return;
     apply();

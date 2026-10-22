@@ -117,10 +117,12 @@ function row(label, iconEl, fn) {
 function render() {
   view.replaceChildren();
   if (rec.transcribing) {
-    view.append(el('div', 'muted state', 'Mentranskrip…'));
+    // saving = Stop menyimpan arsip tanpa STT (lihat autoTranscribe di SW).
+    view.append(el('div', 'muted state', rec.saving ? 'Menyimpan rekaman…' : 'Mentranskrip…'));
   } else if (rec.recording) {
     row('Stop rekam', ICON.stop(), () => chrome.runtime.sendMessage({ type: 'stop-recording' }));
-    view.append(el('div', 'muted state', '● Merekam tab ini'));
+    // Bukan "tab ini": rekaman bersifat global, popup bisa dibuka dari tab lain.
+    view.append(el('div', 'muted state', '● Merekam'));
   } else {
     // caret '' → glyph datang dari CSS (› tertutup, ⌄ terbuka), menempel di
     // tepi kanan baris.
@@ -154,7 +156,7 @@ function render() {
     l.item(code === captionLang ? label + '  ✓' : label, () => setCaptionLang(code));
   }
   row('Tampilkan detail', ICON.detail(), () => openPanel());
-  // Popup TIDAK ditutup setelah start: pesan gagal (tab bukan Meet/Discord,
+  // Popup TIDAK ditutup setelah start: pesan gagal (URL tab tak dikenali,
   // rekaman lain masih jalan) harus punya tempat untuk muncul.
   if (rec.error) view.append(el('div', 'err', rec.error));
   view.append(el('div', 'sep'));
@@ -183,7 +185,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   // 'error' in msg, bukan msg.error ?? null: broadcast progres tidak membawa
   // field error sama sekali, dan menganggapnya null menghapus pesan yang baru
   // terbit.
-  rec = { recording: msg.recording, transcribing: msg.transcribing,
+  rec = { recording: msg.recording, transcribing: msg.transcribing, saving: !!msg.saving,
     error: 'error' in msg ? msg.error : rec.error };
   render();
 });
@@ -199,6 +201,7 @@ chrome.storage.local.get('settings').then((d) => {
 }).catch(() => {});
 chrome.runtime.sendMessage({ type: 'get-active' }).then((d) => {
   if (!d?.rec) return;
-  rec = { ...rec, recording: d.rec.recording, transcribing: d.rec.transcribing };
+  rec = { ...rec, recording: d.rec.recording, transcribing: d.rec.transcribing,
+    saving: d.rec.transcribing && d.rec.autoStt === false };
   render();
 }).catch(() => {}); // service worker baru bangun & belum punya listener

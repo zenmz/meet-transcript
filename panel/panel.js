@@ -4,7 +4,11 @@ const view = document.getElementById('view');
 let tab = 'live';
 let viewingId = null; // di tab Riwayat: meeting yang sedang dibuka
 let status = { id: null, inCall: false, captionsOn: false, lastSegmentAt: 0, captionsOnAt: 0 };
-let recState = { recording: false, transcribing: false, done: 0, total: 0, error: null };
+let recState = { recording: false, transcribing: false, saving: false, done: 0, total: 0, error: null };
+// Label status siklus rekam yang sedang selesai. saving = Stop menyimpan arsip
+// tanpa STT (Meet bermode caption & platform lain) — bukan "Mentranskrip…".
+const busyLabel = () => (recState.saving ? 'Menyimpan rekaman…'
+  : recState.total ? `Mentranskrip… ${recState.done}/${recState.total}` : 'Mentranskrip…');
 // Firefox tidak punya tabCapture — rekam audio mustahil di sana, jadi seluruh
 // UI-nya (bar rekam di tab Live, sumber "Rekam audio" + blok STT di Settings)
 // disembunyikan. Tombol audio di Riwayat TIDAK perlu digate: syaratnya
@@ -16,6 +20,42 @@ async function loadSettings() { settingsCache = (await chrome.storage.local.get(
 
 // Dipakai bersama popup — lihat lib/ui.js.
 const { el, mkBtn, mkDropdown } = globalThis.MeetUi;
+
+// Minta izin host sekaligus untuk semua base URL: dua request permintaan
+// berurutan di satu klik kehilangan user activation di antara dialog (throw
+// "must be called during a user gesture") — satu dialog gabungan menghindari
+// itu. Dipakai Simpan, Tes koneksi, dan Generate transkrip; wajib dipanggil
+// sebelum await lain di handler klik.
+// invalidUrl ditandai di objek error, bukan dicocokkan dari teks pesannya:
+// pemanggil harus bisa membedakan "URL-nya salah, jangan simpan" dari "izin
+// ditolak, tetap simpan" — dan pencocokan awalan teks diam-diam gagal begitu
+// ada pesan baru yang tidak memakai awalan itu.
+const badUrl = (m) => Object.assign(new Error(m), { invalidUrl: true });
+async function ensureOrigins(bases) {
+  const patterns = [];
+  for (const b of bases) {
+    // new URL() saja terlalu longgar: "localhost:8080/v1" (skema lupa diketik)
+    // ikut parse jadi protocol "localhost:" + hostname kosong, lolos ke
+    // permissions.request sebagai pattern rusak. Wajib http/https + hostname.
+    let u;
+    try { u = new URL(b); } catch { u = null; }
+    if (!u || !/^https?:$/.test(u.protocol) || !u.hostname) throw badUrl(`URL tidak valid: ${b}`);
+    // Match pattern Chrome tidak mengenal literal IPv6 sama sekali — pattern
+    // "http://[::1]/*" ditolak permissions.request, dan penolakan itu tampil
+    // sebagai "izin ditolak" yang menyesatkan. Katakan sebabnya.
+    if (u.hostname.startsWith('[')) {
+      throw badUrl(`Alamat IPv6 tidak didukung Chrome: ${b}. Pakai 127.0.0.1 atau nama host.`);
+    }
+    // Match pattern Chrome tidak boleh berisi port — pakai hostname saja
+    // (pattern tanpa port otomatis mencakup semua port, mis. localhost:20128).
+    const p = `${u.protocol}//${u.hostname}/*`;
+    if (p !== 'https://api.openai.com/*') patterns.push(p);
+  }
+  if (!patterns.length) return;
+  if (!await chrome.permissions.request({ origins: [...new Set(patterns)] }).catch(() => false)) {
+    throw new Error(`Izin akses ${patterns.join(', ')} ditolak.`);
+  }
+}
 
 // Side panel tidak punya console yang dilihat user, dan halaman Errors di
 // chrome://extensions cuma menampilkan stack minified milik vendor TANPA baris
@@ -89,7 +129,7 @@ chrome.runtime.onMessage.addListener((msg) => {
     // plus tiap kabar unduh model) memaksa satu indexedDB.open lagi.
     const wasActive = recState.recording || recState.transcribing;
     if (wasActive !== (msg.recording || msg.transcribing)) audioMetaKey = null;
-    recState = { recording: msg.recording, transcribing: msg.transcribing,
+    recState = { recording: msg.recording, transcribing: msg.transcribing, saving: !!msg.saving,
       done: msg.done ?? 0, total: msg.total ?? 0,
       // 'error' in msg, bukan msg.error ?? null: broadcast progress tidak
       // membawa field error sama sekali, dan menganggapnya null menghapus
@@ -207,15 +247,15 @@ async function renderMeeting(id, live, epoch) {
   const prevTop = sameView ? view.scrollTop : 0;
   view.replaceChildren();
 
-  // Tidak digate "Sumber transkrip": rekam audio boleh dipakai di mode caption
-  // juga (caption jalan live, audio jadi cadangan/pelengkap yang ditranskrip
-  // saat stop). Tanpa bar ini di mode caption, rekaman yang dimulai dari klik
-  // kanan tidak punya tombol Stop, progres, maupun tempat errornya muncul.
+  // Tidak digate "Sumber transkrip": rekam audio/video boleh dipakai di mode
+  // caption juga (caption jalan live, rekaman jadi arsip yang bisa ditranskrip
+  // manual dari Riwayat). Tanpa bar ini di mode caption, rekaman yang dimulai
+  // dari klik kanan tidak punya tombol Stop, progres, maupun tempat errornya
+  // muncul.
   if (live && HAS_AUDIO) {
     const bar = el('div', 'actions');
     if (recState.transcribing) {
-      bar.append(el('span', 'muted',
-        recState.total ? `Mentranskrip… ${recState.done}/${recState.total}` : 'Mentranskrip…'));
+      bar.append(el('span', 'muted', busyLabel()));
     } else if (recState.recording) {
       const stop = el('button', null, 'Stop rekam');
       stop.addEventListener('click', () => chrome.runtime.sendMessage({ type: 'stop-recording' }));
@@ -337,8 +377,7 @@ async function renderMeeting(id, live, epoch) {
   // "Transkrip ulang" yang diklik dari sini membuat seluruh blok tombol LENYAP
   // tanpa kabar apa pun sampai selesai.
   if (!live && recState.transcribing && (audioMeta ?? []).some((r) => r.meetingId === meeting.id)) {
-    actions.append(el('span', 'muted',
-      recState.total ? `Mentranskrip… ${recState.done}/${recState.total}` : 'Mentranskrip…'));
+    actions.append(el('span', 'muted', busyLabel()));
   }
   // Rekaman MILIK meeting ini yang punya isi. Gate audio (count) dan video
   // (videoCount) DIPISAH per rekaman: part video mendarat tiap 60 detik, chunk
@@ -376,14 +415,30 @@ async function renderMeeting(id, live, epoch) {
         });
       }
     }
-    // Hanya saat Sumber transkrip = Rekam audio (pilihan user 2026-09-09): di
-    // mode caption transkrip datang dari caption, tombol ini cuma membingungkan.
-    // STT saat Stop sengaja TIDAK ikut digate — cuma tombolnya yang disembunyikan.
+    // Ada di SEMUA mode: rekaman Meet bermode caption dan platform lain (Teams,
+    // Webex, Slack, Discord, Zoom) tidak ditranskrip saat Stop (autoTranscribe di
+    // SW), jadi tombol ini satu-satunya jalan ke transkrip audionya. Tanpa
+    // potongan audio tersimpan → tak ada tombol.
     const reable = recs.filter((r) => r.count > 0);
-    if (reable.length && settingsCache.transcriptSource === 'audio') {
+    // Rekaman yang belum pernah ditranskrip tidak punya baris audio:<baseTime>:
+    // — labelnya "Generate", bukan "ulang" untuk sesuatu yang belum pernah ada.
+    const transcribed = (r) => meeting.segments.some((s) => String(s.id ?? '').startsWith(`audio:${r.baseTime}:`));
+    const label = (r) => (transcribed(r) ? 'Transkrip ulang' : 'Generate transkrip');
+    if (reable.length) {
       const jalankan = async (r, setLabel) => {
         setLabel('Mentranskrip…');
         momErrors.delete(meeting.id);
+        // Izin host STT diminta DI SINI, klik ini user gesture-nya — bukan saat
+        // Simpan Settings, supaya user mode caption yang tak pernah memakai STT
+        // tak ditanya izin localhost. Dipanggil sebelum await apa pun: gesture
+        // hilang setelah round-trip. Sudah diizinkan → resolve tanpa dialog.
+        try {
+          await ensureOrigins([globalThis.MeetStt.sttEndpoint(settingsCache).baseUrl].filter(Boolean));
+        } catch (e) {
+          momErrors.set(meeting.id, e.message + ' Transkrip tidak dijalankan — cek STT Base URL di Settings.');
+          render();
+          return;
+        }
         const res = await chrome.runtime.sendMessage(
           { type: 'regenerate-transcript', id: meeting.id, recId: r.recId }).catch(() => null);
         if (!res?.ok) {
@@ -393,17 +448,17 @@ async function renderMeeting(id, live, epoch) {
         // Sukses: hasil datang lewat broadcast meeting-updated, panel rerender sendiri.
       };
       if (reable.length === 1) {
-        const reBtn = btn('Transkrip ulang', () => {
+        const reBtn = btn(label(reable[0]), () => {
           reBtn.disabled = true;
           return jalankan(reable[0], (t) => { reBtn.textContent = t; });
         });
       } else {
         // Dropdown, bukan satu tombol per rekaman: tiap baris transkrip sudah
-        // ditandai audio:<baseTime>:, jadi transkrip ulang per rekaman hanya
+        // ditandai audio:<baseTime>:, jadi transkrip per rekaman hanya
         // mengganti baris miliknya — pilihannya bermakna, bukan sekadar daftar.
-        const re = dropdown('retranskrip', 'Transkrip ulang');
+        const re = dropdown('retranskrip', reable.some(transcribed) ? 'Transkrip audio' : 'Generate transkrip');
         for (const r of reable) {
-          re.item(`dari rekaman ${jam(r.baseTime)}`,
+          re.item(`${label(r)} — rekaman ${jam(r.baseTime)}`,
             () => jalankan(r, (t) => { re.head.textContent = t; }));
         }
       }
@@ -527,6 +582,12 @@ async function renderSettings(epoch) {
   // untuk setup di awal; kalau belum, SW memintanya sendiri saat rekam mulai.
   const micWrap = el('div');
   const micBox = Object.assign(document.createElement('input'), { type: 'checkbox', checked: !!settings.mic });
+  // Ditulis langsung saat diubah, sama seperti hideCaptions & bahasa caption:
+  // popup juga menulis kunci ini, dan doSave mengambilnya dari yang tersimpan.
+  micBox.addEventListener('change', async () => {
+    const cur = (await chrome.storage.local.get('settings')).settings ?? {};
+    await chrome.storage.local.set({ settings: { ...cur, mic: micBox.checked } });
+  });
   const micLabel = el('label');
   micLabel.append(micBox, 'Rekam mikrofon');
   const micBtn = el('button', null, 'Izinkan mikrofon');
@@ -538,17 +599,12 @@ async function renderSettings(epoch) {
   micWrap.hidden = !HAS_AUDIO;
   view.append(micWrap);
 
-  // Seluruh blok STT hanya berarti kalau transkrip datang dari audio. Sumber
-  // caption tidak menyentuh STT sama sekali — menampilkan mode, info, dan
-  // empat field-nya cuma menyuruh user mengonfigurasi sesuatu yang tak dipakai.
-  const audioMode = () => source.value === 'audio';
-
   const ST = globalThis.MeetStt;
   const sttModeSel = field('Mode STT',
     Object.assign(document.createElement('select'), { innerHTML: '' }));
   for (const [val, label] of [
     ['whisper-local', 'Whisper lokal (server sendiri)'],
-    ['api', '9Router / STT API'],
+    ['api', 'STT API'],
   ]) {
     sttModeSel.append(Object.assign(document.createElement('option'), { value: val, textContent: label }));
   }
@@ -559,8 +615,8 @@ async function renderSettings(epoch) {
   const INFO = {
     'whisper-local': 'Audio dikirim ke server whisper OpenAI-compatible milikmu sendiri '
       + '(whisper.cpp, faster-whisper, dll) di URL di bawah. Audio tidak keluar dari '
-      + 'jaringanmu, tapi servernya harus sudah jalan sebelum mulai merekam — kalau mati, '
-      + 'transkrip gagal dan audionya tersimpan untuk diulang.',
+      + 'jaringanmu, tapi servernya harus jalan saat transkrip dibuat — kalau mati, '
+      + 'transkrip gagal dan audionya tetap tersimpan untuk dicoba lagi.',
   };
   const sttInfo = el('div', 'info');
   view.append(sttInfo);
@@ -582,8 +638,11 @@ async function renderSettings(epoch) {
   // Mode menentukan field mana yang relevan. URL/key/model/bahasa tetap
   // tersimpan walau tersembunyi supaya pindah mode bolak-balik tidak
   // menghapus konfigurasi yang sudah benar.
+  // Blok STT tampil di Sumber transkrip apa pun (Chrome): "Generate transkrip"
+  // di Riwayat memakai STT walau sumbernya caption — rekaman platform selain
+  // Meet dan Meet bermode caption hanya bisa ditranskrip lewat tombol itu.
   function applyMode() {
-    const audio = HAS_AUDIO && audioMode();
+    const audio = HAS_AUDIO;
     const m = sttModeSel.value;
     // Field tetap DIBUAT (doSave membaca value-nya, jadi setelan STT yang
     // tersimpan tidak hangus saat Simpan di Firefox) — cuma barisnya yang hilang.
@@ -599,8 +658,6 @@ async function renderSettings(epoch) {
     sttInfo.textContent = info ? 'ⓘ ' + INFO[m] : '';
     sttInfo.hidden = !info;
   }
-  // Pindah sumber transkrip menyembunyikan/memunculkan seluruh blok STT.
-  source.addEventListener('change', applyMode);
   // Satu field dipakai dua mode yang bentuk URL-nya sama sekali berbeda
   // (localhost whisper vs endpoint STT publik), jadi isinya diingat PER MODE.
   // Sebelumnya berpindah mode menimpa/mengosongkan field begitu saja: URL yang
@@ -622,44 +679,16 @@ async function renderSettings(epoch) {
 
   const normalizedBase = () => (baseUrl.value.trim() || DEFAULT_BASE).replace(/\/+$/, '');
   const sttBaseValue = () => sttBaseUrl.value.trim().replace(/\/+$/, '');
-  // Yang DIPAKAI untuk jaringan: sumber caption tidak menyentuh STT sama sekali —
-  // tak boleh memunculkan dialog izin host untuk server yang tidak akan dihubungi.
-  const sttBaseForNetwork = () => (audioMode() ? sttBaseValue() : '');
-
-  // Minta izin chat + STT sekaligus: dua request permintaan berurutan di
-  // satu klik kehilangan user activation di antara dialog (throw "must be
-  // called during a user gesture") — satu dialog gabungan menghindari itu.
-  // Dipakai baik oleh Simpan maupun Tes koneksi.
-  // invalidUrl ditandai di objek error, bukan dicocokkan dari teks pesannya:
-  // pemanggil harus bisa membedakan "URL-nya salah, jangan simpan" dari "izin
-  // ditolak, tetap simpan" — dan pencocokan awalan teks diam-diam gagal begitu
-  // ada pesan baru yang tidak memakai awalan itu.
-  const badUrl = (m) => Object.assign(new Error(m), { invalidUrl: true });
-  async function ensureOrigins(bases) {
-    const patterns = [];
-    for (const b of bases) {
-      // new URL() saja terlalu longgar: "localhost:8080/v1" (skema lupa diketik)
-      // ikut parse jadi protocol "localhost:" + hostname kosong, lolos ke
-      // permissions.request sebagai pattern rusak. Wajib http/https + hostname.
-      let u;
-      try { u = new URL(b); } catch { u = null; }
-      if (!u || !/^https?:$/.test(u.protocol) || !u.hostname) throw badUrl(`URL tidak valid: ${b}`);
-      // Match pattern Chrome tidak mengenal literal IPv6 sama sekali — pattern
-      // "http://[::1]/*" ditolak permissions.request, dan penolakan itu tampil
-      // sebagai "izin ditolak" yang menyesatkan. Katakan sebabnya.
-      if (u.hostname.startsWith('[')) {
-        throw badUrl(`Alamat IPv6 tidak didukung Chrome: ${b}. Pakai 127.0.0.1 atau nama host.`);
-      }
-      // Match pattern Chrome tidak boleh berisi port — pakai hostname saja
-      // (pattern tanpa port otomatis mencakup semua port, mis. localhost:20128).
-      const p = `${u.protocol}//${u.hostname}/*`;
-      if (p !== 'https://api.openai.com/*') patterns.push(p);
-    }
-    if (!patterns.length) return;
-    if (!await chrome.permissions.request({ origins: [...new Set(patterns)] }).catch(() => false)) {
-      throw new Error(`Izin akses ${patterns.join(', ')} ditolak.`);
-    }
-  }
+  // Yang DIPAKAI untuk jaringan saat Simpan: hanya mode Rekam audio, satu-
+  // satunya mode yang mentranskrip otomatis saat Stop — tanpa klik, jadi
+  // izinnya harus sudah ada. Mode lain meminta izin saat "Generate transkrip"
+  // diklik. Firefox tak pernah merekam, jadi tak pernah ditanya.
+  const sttBaseForSave = () => (HAS_AUDIO && source.value === 'audio' ? sttBaseValue() : '');
+  // Tes koneksi mengikuti aturan Simpan: STT hanya diuji di mode Rekam audio.
+  // Di mode caption, field STT terisi default localhost:8080 — mengujinya
+  // memunculkan izin localhost untuk user yang tak memakai STT, dan menolak izin
+  // itu menggagalkan tes chat-nya juga. STT mode caption diuji lewat Generate.
+  const sttBaseForTest = sttBaseForSave;
 
   // GET /models saja: cukup deteksi typo URL / API key kosong-salah tanpa
   // butuh file audio sungguhan. 404/405/501 tetap dianggap OK (warning) —
@@ -668,8 +697,14 @@ async function renderSettings(epoch) {
     const host = new URL(base).hostname;
     let res;
     try {
-      res = await fetch(`${base}/models`, key ? { headers: { Authorization: `Bearer ${key}` } } : {});
-    } catch {
+      res = await fetch(`${base}/models`, {
+        ...(key ? { headers: { Authorization: `Bearer ${key}` } } : {}),
+        // Server yang menerima koneksi tapi tak pernah menjawab membuat await
+        // ini menggantung selamanya — finally tak jalan, tombol macet disabled.
+        signal: AbortSignal.timeout(15000),
+      });
+    } catch (e) {
+      if (e?.name === 'TimeoutError') throw new Error(`STT ${host} tidak menjawab dalam 15 detik.`);
       throw new Error(`Tidak bisa terhubung ke STT ${host}.`);
     }
     if (res.status === 401 || res.status === 403) {
@@ -690,7 +725,7 @@ async function renderSettings(epoch) {
     setNote('muted', 'Menguji…');
     try {
       const base = normalizedBase();
-      const sttBase = sttBaseForNetwork();
+      const sttBase = sttBaseForTest();
       // Kedua origin diminta sekaligus di sini, sebelum testConnection (yang
       // bisa >5 detik) — request izin kedua setelah round-trip jaringan sudah
       // lewat batas user activation dan gagal ("must be called during a user
@@ -726,7 +761,7 @@ async function renderSettings(epoch) {
 
   async function doSave() {
     const base = normalizedBase();
-    const sttBase = sttBaseForNetwork();
+    const sttBase = sttBaseForSave();
     let warning = null;
     try {
       await ensureOrigins(sttBase ? [base, sttBase] : [base]);
@@ -736,6 +771,10 @@ async function renderSettings(epoch) {
       if (e.invalidUrl) return setNote('err', e.message);
       warning = e.message; // izin ditolak → tetap simpan, tapi beri tahu
     }
+    // mic & bahasa caption & hideCaptions ditulis LANGSUNG saat diubah (di sini
+    // maupun dari popup), jadi nilai tersimpan yang benar — nilai form bisa basi
+    // kalau popup mengubahnya selagi tab Settings ini terbuka.
+    const cur = (await chrome.storage.local.get('settings')).settings ?? {};
     await chrome.storage.local.set({
       settings: {
         apiKey: apiKey.value.trim(),
@@ -743,11 +782,11 @@ async function renderSettings(epoch) {
         model: model.value.trim() || 'gpt-4o-mini',
         momTemplate: template.value,
         transcriptSource: source.value,
-        hideCaptions: hideBox.checked,
+        hideCaptions: cur.hideCaptions ?? hideBox.checked,
         // WAJIB ikut: blok ini menulis objek settings UTUH, bukan menggabung ke
         // yang tersimpan — kunci yang tidak disebut di sini hilang tiap Simpan.
-        captionLang: captionLang.value,
-        mic: micBox.checked,
+        captionLang: cur.captionLang ?? captionLang.value,
+        mic: cur.mic ?? micBox.checked,
         sttMode: sttModeSel.value,
         sttModel: sttModel.value.trim() || ST.DEFAULT_API_MODEL,
         sttLanguage: sttLanguage.value.trim(),
@@ -755,7 +794,11 @@ async function renderSettings(epoch) {
         sttApiKey: sttApiKey.value.trim(),
       },
     });
+    // fillTemplate tanpa placeholder = prompt TANPA transkrip, dan MoM yang
+    // dihasilkan tampak sah padahal karangan. Tetap disimpan, tapi diperingatkan.
+    const noPlaceholder = !template.value.includes('{{transcript}}');
     if (warning) setNote('err', `Tersimpan, tapi ${warning} Request bisa gagal.`);
+    else if (noPlaceholder) setNote('err', 'Tersimpan, tapi Template MoM tidak memuat {{transcript}} — MoM akan dibuat tanpa transkrip.');
     else setNote('ok', 'Tersimpan.');
   }
 
@@ -853,7 +896,8 @@ chrome.storage.onChanged.addListener((c, area) => {
   await loadSettings();
   const a = await chrome.runtime.sendMessage({ type: 'get-active' }).catch(() => null);
   if (a) status = a;
-  if (a?.rec) recState = { ...recState, recording: a.rec.recording, transcribing: a.rec.transcribing };
+  if (a?.rec) recState = { ...recState, recording: a.rec.recording, transcribing: a.rec.transcribing,
+    saving: a.rec.transcribing && a.rec.autoStt === false };
   // Dibuka dari popup: mendarat di tab yang diminta, dan kalau judul meeting
   // yang diklik — langsung di detail meeting itu. viewingId diisi SESUDAH
   // selectTab, yang justru mengosongkannya.

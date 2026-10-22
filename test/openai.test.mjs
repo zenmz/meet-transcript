@@ -9,7 +9,7 @@ test('JSON tunggal biasa', () => {
   assert.equal(extractContent(raw), 'halo');
 });
 
-test('JSON diikuti terminator SSE "data: [DONE]" (format 9Router)', () => {
+test('JSON diikuti terminator SSE "data: [DONE]" (format sebagian proxy)', () => {
   const raw = JSON.stringify({ choices: [{ message: { content: 'halo' } }] }) + 'data: [DONE]';
   assert.equal(extractContent(raw), 'halo');
 });

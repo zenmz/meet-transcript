@@ -16,9 +16,20 @@
   // dan CAPTION_REGION ditulis untuk q() (cocok pertama menang) — sebagai CSS
   // keempat selector berlaku sekaligus, jadi fallback aria/class lama tak
   // perlu diberi kesempatan salah sasaran di halaman yang tak relevan.
-  const sync = () => {
-    if (on && S.inCall()) { if (!style.isConnected) document.documentElement.append(style); }
-    else style.remove();
+  // Dilepas hanya setelah 2 tick (≈4 detik) berturut-turut di luar call: tombol
+  // keluar berkedip saat Meet menukar layout (lihat session.js LEAVE_TICKS), dan
+  // melepasnya di kedipan itu memunculkan caption + menata ulang tile sekejap —
+  // persis yang dihindari display:none.
+  let goneTicks = 0;
+  // tick = dipanggil timer 2 detik. Panggilan dari perubahan settings tak ikut
+  // menghitung kedipan: ia hanya melepas style kalau user mematikan opsinya.
+  const sync = (tick = false) => {
+    if (on && S.inCall()) {
+      goneTicks = 0;
+      if (!style.isConnected) document.documentElement.append(style);
+    } else if (!on || (tick && ++goneTicks >= 2)) {
+      style.remove();
+    }
   };
 
   // Listener dulu, snapshot belakangan. Snapshot get() bisa lebih tua dari
@@ -42,6 +53,6 @@
   // sampai tab di-reload, tak terjangkau checkbox Settings mana pun.
   const timer = setInterval(() => {
     if (!chrome.runtime?.id) { clearInterval(timer); style.remove(); return; }
-    sync();
+    sync(true);
   }, 2000);
 })();

@@ -6,15 +6,15 @@ Konteks umum: kode ini padat komentar rasional dan hampir semua race MV3 yang la
 
 ## Correctness / race
 
-- [ ] `panel/panel.js:693` — `probeStt` fetch tanpa timeout; tombol "Tes koneksi" bisa macet disabled selamanya.
+- [x] `panel/panel.js:693` — `probeStt` fetch tanpa timeout; tombol "Tes koneksi" bisa macet disabled selamanya. *(diperbaiki 2026-10-22)*
   Endpoint STT yang menerima koneksi tapi tidak pernah menjawab (persis skenario yang sudah diantisipasi `STT_TIMEOUT_MS` di `lib/openai.js`) membuat `await probeStt(...)` menggantung → `finally` tak pernah jalan → tombol disabled + "Menguji…" permanen sampai panel ditutup. Fix: tambah `signal: AbortSignal.timeout(15000)` di fetch `/models`, map `TimeoutError` ke pesan "STT <host> tidak menjawab".
 
-- [ ] `background/service-worker.js:487` — dua tab in-call bersamaan (dua ruang berbeda) saling rebut `active` tiap 2 detik.
+- [x] `background/service-worker.js:487` — dua tab in-call bersamaan (dua ruang berbeda) saling rebut `active` tiap 2 detik. *(diperbaiki 2026-10-22)*
   `canClaim = msg.inCall || !active.inCall || !active.id` meloloskan SEMUA tab in-call, jadi dua meeting paralel (satu di-park di tab lain — kasus nyata) membuat `active` flip-flop tiap tick: tab Live berganti meeting bolak-balik, dan `captionsOnAt` ikut ter-reset tiap flip sehingga warning "caption nyala tapi tak ada teks 30 detik" tak pernah bisa terbit. Penyimpanan transkrip tetap benar (per port), yang rusak status/UI. Fix: klaim in-call tidak boleh digusur klaim in-call lain — `const canClaim = msg.inCall ? (!active.inCall || active.id === msg.id) : (!active.inCall || !active.id)`; tab lama yang selesai melepas klaim lewat `endMeeting` seperti biasa. Catatan sekalian: dua tab in-call di ruang yang SAMA menghasilkan segmen dobel (sessionTag beda → id tak tabrakan → transkrip dobel); minimal dokumentasikan sebagai batasan.
 
 ## Validasi trust-boundary
 
-- [ ] `panel/panel.js:749` — `doSave` menerima Template MoM tanpa `{{transcript}}` tanpa peringatan.
+- [x] `panel/panel.js:749` — `doSave` menerima Template MoM tanpa `{{transcript}}` tanpa peringatan. *(diperbaiki 2026-10-22)*
   User yang mengedit template dan tak sengaja menghapus placeholder tetap bisa Simpan; `fillTemplate` jadi no-op dan "Generate MoM" mengirim prompt TANPA transkrip — hasilnya MoM halusinasi yang tampak sah, tanpa satu pun tanda kenapa. Fix satu baris di `doSave`: kalau `!template.value.includes('{{transcript}}')`, simpan tetap jalan tapi `setNote('err', 'Template tidak memuat {{transcript}} — MoM akan digenerate tanpa transkrip.')`.
 
 ## Data retention / privasi

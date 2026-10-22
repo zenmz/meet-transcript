@@ -24,6 +24,10 @@ test('meetingIdFrom hanya menerima pola kode Meet', () => {
   assert.equal(meetingIdFrom('/abc-defg-hij'), A);
   assert.equal(meetingIdFrom('/landing'), null);
   assert.equal(meetingIdFrom('/'), null);
+  // /meet/<kode> = ruang yang sama dengan /<kode>; id harus identik dengan SW.
+  assert.equal(meetingIdFrom('/meet/abc-defg-hij'), A);
+  assert.equal(meetingIdFrom('/meet/landing'), null);
+  assert.equal(meetingIdFrom('/_meet/abc-defg-hij'), A);
   assert.equal(meetingIdFrom(undefined), null);
 });
 

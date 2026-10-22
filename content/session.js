@@ -4,7 +4,10 @@
 // atau tidak, dan salah satu arah kegagalannya tidak terlihat di UI mana pun.
 // Classic script (globalThis), sama seperti selectors.js.
 (() => {
-  const MEET_RE = /^[a-z]{3}-[a-z]{4}-[a-z]{3}$/;
+  // /<kode>, /meet/<kode>, /_meet/<kode> = ruang yang sama — id-nya kode saja.
+  // Harus sama dengan MEET_PATH_RE di service worker: beda pola berarti
+  // rekaman dan caption menulis ke dua record berbeda (atau salah satunya tak jalan).
+  const MEET_PATH_RE = /^\/(?:_?meet\/)?([a-z]{3}-[a-z]{4}-[a-z]{3})$/;
   // Dua tick (≈4 detik) sebelum sesi ditutup. Menutup di tick pertama
   // menghentikan rekaman yang masih berjalan, dan dua hal yang normal bisa
   // memicunya sesaat: tombol "keluar dari panggilan" berkedip saat Meet menukar
@@ -12,8 +15,8 @@
   const LEAVE_TICKS = 2;
 
   function meetingIdFrom(pathname) {
-    const p = String(pathname ?? '').slice(1);
-    return MEET_RE.test(p) ? p : null;
+    const m = String(pathname ?? '').match(MEET_PATH_RE);
+    return m ? m[1] : null;
   }
 
   const INITIAL = { curId: null, reporting: false, sawInCall: false, goneTicks: 0 };

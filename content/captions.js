@@ -95,7 +95,9 @@
     // port ditutup lebih dulu. Pakai id yang BARU BERAKHIR, bukan sess.curId:
     // saat pindah ruang, sess sudah menunjuk ruang berikutnya.
     if (dirty.size && endedId) {
-      post({ type: 'segments', meetingId: endedId, title: S.meetingTitle(), segs: [...dirty.values()] });
+      // title kosong = "jangan ubah judul": document.title saat ini bisa sudah
+      // milik ruang BERIKUTNYA (pindah ruang di dokumen yang sama).
+      post({ type: 'segments', meetingId: endedId, title: '', segs: [...dirty.values()] });
     }
     // Dikosongkan tanpa memeriksa hasil post. Kalau post gagal (SW
     // mati tepat di tick penutup) segmen ekor itu memang hilang — sesi sudah
